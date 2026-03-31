@@ -1070,11 +1070,15 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const [newTech, setNewTech] = useState({ name: '', bank: '', branch: '', accNo: '' });
   const [newProv, setNewProv] = useState({ name: '', travelCost: '' });
   const [newAppr, setNewAppr] = useState({ name: '' });
+  const [newAdmin, setNewAdmin] = useState({ name: '' });
   const [newUser, setNewUser] = useState({ username: '', name: '', password: '' });
+  const [newOp, setNewOp] = useState({ name: '' });
+  const [newSales, setNewSales] = useState({});
 
   const [editingTech, setEditingTech] = useState(null);
   const [editingProv, setEditingProv] = useState(null);
   const [editingAppr, setEditingAppr] = useState(null);
+  const [editingAdmin, setEditingAdmin] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
 
   const [importType, setImportType] = useState('technicians');
@@ -1083,16 +1087,30 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const handleAddTech = () => { if (newTech.name) { setDb({ ...db, technicians: [...db.technicians, { ...newTech, id: 'T' + Date.now() }] }); setNewTech({ name: '', bank: '', branch: '', accNo: '' }); } };
   const handleAddProv = () => { if (newProv.name) { setDb({ ...db, provinces: [...db.provinces, { name: newProv.name, travelCost: Number(newProv.travelCost) }] }); setNewProv({ name: '', travelCost: '' }); } };
   const handleAddAppr = () => { if (newAppr.name) { setDb({ ...db, approvers: [...db.approvers, { id: 'AP' + Date.now(), name: newAppr.name }] }); setNewAppr({ name: '' }); } };
+  const handleAddAdmin = () => { if (newAdmin.name) { setDb({ ...db, admins: [...(db.admins || []), { id: 'A' + Date.now(), name: newAdmin.name }] }); setNewAdmin({ name: '' }); } };
   const handleAddUser = () => { if (newUser.username && newUser.password) { setDb({ ...db, users: [...(db.users || []), { ...newUser, id: 'U' + Date.now() }] }); setNewUser({ username: '', name: '', password: '' }); } };
+  const handleAddOp = () => { if (newOp.name) { setDb({ ...db, operations: [...(db.operations || []), { id: 'OP' + Date.now(), name: newOp.name, sales: [] }] }); setNewOp({ name: '' }); } };
 
   const handleDeleteTech = (id) => { showConfirm('ยืนยันการลบช่าง?', () => { setDb({ ...db, technicians: db.technicians.filter(t => t.id !== id) }); }); };
   const handleDeleteProv = (name) => { showConfirm('ยืนยันการลบจังหวัด?', () => { setDb({ ...db, provinces: db.provinces.filter(p => p.name !== name) }); }); };
   const handleDeleteAppr = (id) => { showConfirm('ยืนยันการลบผู้อนุมัติ?', () => { setDb({ ...db, approvers: db.approvers.filter(a => a.id !== id) }); }); };
+  const handleDeleteAdmin = (id) => { showConfirm('ยืนยันการลบผู้ทำเบิก?', () => { setDb({ ...db, admins: db.admins.filter(a => a.id !== id) }); }); };
   const handleDeleteUser = (id) => { showConfirm('ยืนยันการลบผู้ใช้งาน?', () => { setDb({ ...db, users: db.users.filter(u => u.id !== id) }); }); };
+  const handleDeleteOp = (id) => { showConfirm('ยืนยันการลบ Operation?', () => { setDb({ ...db, operations: db.operations.filter(o => o.id !== id) }); }); };
+
+  const handleAddSales = (opId) => { 
+    const sName = newSales[opId];
+    if (sName && sName.trim()) {
+      setDb({ ...db, operations: db.operations.map(o => o.id === opId ? { ...o, sales: [...(o.sales || []), sName.trim()] } : o) });
+      setNewSales({ ...newSales, [opId]: '' });
+    }
+  };
+  const handleDeleteSales = (opId, sName) => { showConfirm(`ยืนยันการลบพนักงานเซลล์: ${sName}?`, () => { setDb({ ...db, operations: db.operations.map(o => o.id === opId ? { ...o, sales: o.sales.filter(s => s !== sName) } : o) }); }); };
 
   const handleSaveTech = () => { setDb({ ...db, technicians: db.technicians.map(t => t.id === editingTech.id ? editingTech : t) }); setEditingTech(null); };
   const handleSaveProv = () => { setDb({ ...db, provinces: db.provinces.map(p => p.name === editingProv.oldName ? { name: editingProv.name, travelCost: Number(editingProv.travelCost) } : p) }); setEditingProv(null); };
   const handleSaveAppr = () => { setDb({ ...db, approvers: db.approvers.map(a => a.id === editingAppr.id ? editingAppr : a) }); setEditingAppr(null); };
+  const handleSaveAdmin = () => { setDb({ ...db, admins: db.admins.map(a => a.id === editingAdmin.id ? editingAdmin : a) }); setEditingAdmin(null); };
   const handleSaveUser = () => { setDb({ ...db, users: db.users.map(u => u.id === editingUser.id ? editingUser : u) }); setEditingUser(null); };
 
   const handleFileUpload = (e) => {
@@ -1126,6 +1144,10 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
           newDb.approvers.push({ id: 'AP_IMP' + Date.now() + index, name: cols[0] });
           addedCount++;
         }
+        else if (importType === 'admins' && cols.length >= 1) {
+          newDb.admins.push({ id: 'A_IMP' + Date.now() + index, name: cols[0] });
+          addedCount++;
+        }
       });
 
       setDb(newDb);
@@ -1155,6 +1177,7 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
               <option value="technicians">นำเข้า 'ทีมช่าง'</option>
               <option value="provinces">นำเข้า 'จังหวัดและค่าเดินทาง'</option>
               <option value="approvers">นำเข้า 'ผู้อนุมัติ'</option>
+              <option value="admins">นำเข้า 'ผู้ทำเบิก'</option>
             </select>
             <label className="flex items-center text-sm font-semibold text-slate-700 cursor-pointer">
               <input type="checkbox" checked={importHasHeader} onChange={e => setImportHasHeader(e.target.checked)} className="mr-2 w-4 h-4 rounded text-blue-600 focus:ring-blue-500"/>
@@ -1224,9 +1247,9 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
           <div className="p-4 flex flex-col gap-4">
             <div className="flex gap-2">
               <input type="text" placeholder="เพิ่มชื่อผู้อนุมัติใหม่" value={newAppr.name} onChange={e=>setNewAppr({name:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500" />
-              <button onClick={handleAddAppr} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 shadow-sm"><PlusCircle size={18}/></button>
+              <button onClick={handleAddAppr} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 shadow-sm flex items-center"><PlusCircle size={18} className="mr-1"/>เพิ่ม</button>
             </div>
-            <div className="border border-slate-100 rounded-lg overflow-hidden">
+            <div className="border border-slate-100 rounded-lg overflow-hidden max-h-[250px] overflow-y-auto">
               <table className="w-full text-sm">
                 <tbody className="divide-y divide-slate-100">
                   {db.approvers.map(a => (
@@ -1258,18 +1281,57 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
 
         <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col bg-white">
           <div className="bg-slate-50 p-4 border-b border-slate-200">
-            <h3 className="font-bold text-slate-800">จัดการผู้ใช้งาน (Login)</h3>
+            <h3 className="font-bold text-slate-800">รายชื่อผู้ทำเบิก (โชว์ใน PDF)</h3>
           </div>
           <div className="p-4 flex flex-col gap-4">
             <div className="flex gap-2">
-              <input type="text" placeholder="Username" value={newUser.username} onChange={e=>setNewUser({...newUser, username:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500" />
-              <input type="text" placeholder="ชื่อ-นามสกุล" value={newUser.name} onChange={e=>setNewUser({...newUser, name:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500" />
-              <input type="text" placeholder="รหัสผ่าน" value={newUser.password} onChange={e=>setNewUser({...newUser, password:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500" />
-              <button onClick={handleAddUser} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 shadow-sm"><PlusCircle size={18}/></button>
+              <input type="text" placeholder="เพิ่มชื่อผู้ทำเบิกใหม่" value={newAdmin.name} onChange={e=>setNewAdmin({name:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500" />
+              <button onClick={handleAddAdmin} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 shadow-sm flex items-center"><PlusCircle size={18} className="mr-1"/>เพิ่ม</button>
             </div>
-            <div className="border border-slate-100 rounded-lg overflow-hidden">
+            <div className="border border-slate-100 rounded-lg overflow-hidden max-h-[250px] overflow-y-auto">
               <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600"><tr><th className="p-3 text-left font-semibold">Username</th><th className="p-3 text-left font-semibold">ชื่อ-นามสกุล</th><th className="p-3 text-left font-semibold">รหัสผ่าน</th><th className="p-3 text-center font-semibold w-24">จัดการ</th></tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(db.admins || []).map(a => (
+                    <tr key={a.id} className="hover:bg-slate-50 transition-colors">
+                      {editingAdmin?.id === a.id ? (
+                         <>
+                          <td className="p-2"><input className="border border-slate-300 w-full p-1.5 rounded focus:ring-blue-500" value={editingAdmin.name} onChange={e=>setEditingAdmin({...editingAdmin, name:e.target.value})} /></td>
+                          <td className="p-2 text-right space-x-2 w-24">
+                            <button onClick={handleSaveAdmin} className="text-emerald-600 hover:text-emerald-800 bg-emerald-50 p-1.5 rounded"><Save size={16}/></button>
+                            <button onClick={()=>setEditingAdmin(null)} className="text-slate-500 hover:text-slate-700 bg-slate-100 p-1.5 rounded"><X size={16}/></button>
+                          </td>
+                         </>
+                      ) : (
+                        <>
+                          <td className="p-3 font-medium text-slate-800">{a.name}</td>
+                          <td className="p-3 text-right space-x-2">
+                            <button onClick={()=>setEditingAdmin(a)} className="text-blue-600 hover:text-blue-800 bg-blue-50 p-1.5 rounded transition-colors"><Edit2 size={16}/></button>
+                            <button onClick={()=>handleDeleteAdmin(a.id)} className="text-red-500 hover:text-red-700 bg-red-50 p-1.5 rounded transition-colors"><Trash2 size={16}/></button>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col bg-white">
+          <div className="bg-slate-50 p-4 border-b border-slate-200">
+            <h3 className="font-bold text-slate-800">จัดการผู้ใช้งานระบบ (Login Admin)</h3>
+          </div>
+          <div className="p-4 flex flex-col gap-4">
+            <div className="flex gap-2 flex-wrap">
+              <input type="text" placeholder="Username" value={newUser.username} onChange={e=>setNewUser({...newUser, username:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500 min-w-[100px]" />
+              <input type="text" placeholder="ชื่อ-นามสกุล" value={newUser.name} onChange={e=>setNewUser({...newUser, name:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500 min-w-[120px]" />
+              <input type="text" placeholder="รหัสผ่าน" value={newUser.password} onChange={e=>setNewUser({...newUser, password:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500 min-w-[100px]" />
+              <button onClick={handleAddUser} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 shadow-sm flex items-center"><PlusCircle size={18} className="mr-1"/> เพิ่มผู้ใช้งาน</button>
+            </div>
+            <div className="border border-slate-100 rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-slate-600 sticky top-0"><tr><th className="p-3 text-left font-semibold">Username</th><th className="p-3 text-left font-semibold">ชื่อ-นามสกุล</th><th className="p-3 text-left font-semibold">รหัสผ่าน</th><th className="p-3 text-center font-semibold w-24">จัดการ</th></tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {(db.users || []).map(u => (
                     <tr key={u.id} className="hover:bg-slate-50 transition-colors">
@@ -1302,15 +1364,15 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
           </div>
         </div>
 
-        <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col md:col-span-2">
+        <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col bg-white md:col-span-2">
           <div className="bg-slate-50 p-4 border-b border-slate-200">
             <h3 className="font-bold text-slate-800">ค่าเดินทางแต่ละจังหวัด</h3>
           </div>
-          <div className="p-4 bg-white flex-1 flex flex-col">
+          <div className="p-4 flex-1 flex flex-col">
             <div className="flex gap-2 mb-4">
               <input type="text" placeholder="ชื่อจังหวัด" value={newProv.name} onChange={e=>setNewProv({...newProv, name:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500" />
               <input type="number" placeholder="ค่าเดินทาง" value={newProv.travelCost} onChange={e=>setNewProv({...newProv, travelCost:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm w-28 shadow-sm focus:ring-blue-500" />
-              <button onClick={handleAddProv} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 shadow-sm"><PlusCircle size={18}/></button>
+              <button onClick={handleAddProv} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 shadow-sm flex items-center"><PlusCircle size={18} className="mr-1"/>เพิ่ม</button>
             </div>
             <div className="overflow-y-auto border border-slate-100 rounded-lg flex-1 max-h-[300px]">
               <table className="w-full text-sm">
@@ -1344,6 +1406,43 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
             </div>
           </div>
         </div>
+
+        <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col bg-white md:col-span-2">
+          <div className="bg-slate-50 p-4 border-b border-slate-200">
+            <h3 className="font-bold text-slate-800">จัดการ Operation และ พนักงานเซลล์</h3>
+          </div>
+          <div className="p-5 flex flex-col gap-5">
+            <div className="flex gap-2">
+              <input type="text" placeholder="เพิ่มชื่อ Operation ใหม่ (เช่น โครงการพิเศษ)" value={newOp.name} onChange={e=>setNewOp({name:e.target.value})} className="border border-slate-200 p-2.5 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500" />
+              <button onClick={handleAddOp} className="bg-slate-800 text-white px-5 py-2.5 rounded-lg hover:bg-slate-900 shadow-sm flex items-center font-semibold"><PlusCircle size={18} className="mr-2"/>เพิ่ม Operation</button>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {(db.operations || []).map(op => (
+                <div key={op.id} className="border border-slate-200 rounded-xl p-5 bg-slate-50 relative hover:shadow-md transition-shadow">
+                  <button onClick={() => handleDeleteOp(op.id)} className="absolute top-4 right-4 text-red-500 hover:text-red-700 bg-red-50 p-1.5 rounded-lg transition-colors"><Trash2 size={18}/></button>
+                  <h4 className="font-bold text-indigo-700 mb-4 pr-10 text-lg flex items-center"><LayoutDashboard className="mr-2 w-5 h-5" />{op.name}</h4>
+                  
+                  <div className="flex gap-2 mb-4">
+                    <input type="text" placeholder="พิมพ์ชื่อเซลล์แล้วกดเพิ่ม" value={newSales[op.id] || ''} onChange={e=>setNewSales({...newSales, [op.id]: e.target.value})} className="border border-slate-200 p-2 rounded-lg flex-1 text-sm shadow-sm focus:ring-indigo-500" />
+                    <button onClick={() => handleAddSales(op.id)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 shadow-sm font-semibold">เพิ่ม</button>
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {(op.sales || []).length === 0 ? <span className="text-xs text-slate-400 italic">ยังไม่มีรายชื่อพนักงานเซลล์</span> : null}
+                    {(op.sales || []).map((s, idx) => (
+                      <span key={idx} className="bg-white border border-slate-200 pl-3 pr-1.5 py-1 rounded-full text-xs font-semibold text-slate-700 flex items-center shadow-sm hover:border-slate-300">
+                        {s}
+                        <button onClick={() => handleDeleteSales(op.id, s)} className="ml-1.5 p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"><X size={14}/></button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );
