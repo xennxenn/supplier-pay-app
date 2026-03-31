@@ -21,7 +21,8 @@ import {
   User,
   Lock,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -31,7 +32,7 @@ import {
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
 // --- FIREBASE INITIALIZATION ---
 const firebaseConfig = {
@@ -148,27 +149,51 @@ const getThaiBahtText = (amount) => {
 
 // --- UI COMPONENTS ---
 const DialogModal = ({ dialog, onClose }) => {
+  const [inputValue, setInputValue] = useState('');
+
+  useEffect(() => {
+    setInputValue('');
+  }, [dialog]);
+
   if (!dialog) return null;
+
+  const isPrompt = dialog.type === 'prompt';
+  const isDisabled = isPrompt && inputValue !== dialog.expectedInput;
+
   return (
     <div className="fixed inset-0 bg-slate-900/40 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
       <div className="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full transform transition-all">
         <div className="flex items-start mb-4">
-          <div className={`p-2 rounded-full mr-3 ${dialog.type === 'confirm' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'}`}>
-            <AlertCircle size={24} />
+          <div className={`p-2 rounded-full mr-3 flex-shrink-0 ${dialog.type === 'alert' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}`}>
+            {dialog.type === 'alert' ? <AlertCircle size={24} /> : <AlertTriangle size={24} />}
           </div>
           <div className="flex-1 pt-1">
-            <p className="text-slate-800 font-medium whitespace-pre-wrap">{dialog.message}</p>
+            <p className="text-slate-800 font-medium whitespace-pre-wrap leading-relaxed">{dialog.message}</p>
+            {isPrompt && (
+              <input 
+                type="text" 
+                value={inputValue}
+                onChange={e => setInputValue(e.target.value)}
+                placeholder={`พิมพ์ "${dialog.expectedInput}"`}
+                className="mt-4 w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all text-center font-mono"
+              />
+            )}
           </div>
         </div>
         <div className="flex justify-end space-x-3 mt-6">
-          {dialog.type === 'confirm' && (
+          {(dialog.type === 'confirm' || isPrompt) && (
             <button onClick={onClose} className="px-4 py-2.5 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200 transition-colors">
               ยกเลิก
             </button>
           )}
           <button 
+            disabled={isDisabled}
             onClick={() => { if(dialog.onConfirm) dialog.onConfirm(); onClose(); }} 
-            className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+            className={`px-6 py-2.5 font-semibold rounded-xl transition-all shadow-sm ${
+              isDisabled 
+                ? 'bg-slate-300 text-slate-500 cursor-not-allowed' 
+                : dialog.type === 'alert' ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-red-600 text-white hover:bg-red-700'
+            }`}
           >
             ตกลง
           </button>
@@ -181,8 +206,8 @@ const DialogModal = ({ dialog, onClose }) => {
 // --- FEATURE COMPONENTS ---
 
 // 1. Data Entry Form
-const DataEntry = ({ db, records, onSave, showAlert, showConfirm }) => {
-  const [formData, setFormData] = useState({
+const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit, showAlert, showConfirm }) => {
+  const defaultEmptyForm = {
     date: new Date().toISOString().split('T')[0],
     technicianId: db.technicians[0]?.id || '',
     jobTypeId: db.jobTypes[0]?.id || '',
@@ -197,7 +222,20 @@ const DataEntry = ({ db, records, onSave, showAlert, showConfirm }) => {
     scaffoldQty: 0,
     motorQty: 0,
     otherExpense: 0 
-  });
+  };
+
+  const [formData, setFormData] = useState(defaultEmptyForm);
+
+  useEffect(() => {
+    if (editingRecord) {
+      setFormData({
+        ...editingRecord,
+        otherExpense: editingRecord.otherExpense || (editingRecord.calculated?.otherCost || 0)
+      });
+    } else {
+      setFormData(defaultEmptyForm);
+    }
+  }, [editingRecord, db]);
 
   const handleOpChange = (e) => {
     const opId = e.target.value;
@@ -233,19 +271,25 @@ const DataEntry = ({ db, records, onSave, showAlert, showConfirm }) => {
   const grandTotal = travelCost + ladderCost + scaffoldCost + motorCost + installCost + otherCost;
 
   const executeSave = () => {
-    const newRecord = {
+    const recordToSave = {
       ...formData,
-      id: 'REC' + Date.now(),
+      id: editingRecord ? editingRecord.id : 'REC' + Date.now(),
       jobTypeName: currentJobType?.name || '',
       operationName: db.operations.find(o => o.id === formData.operationId)?.name || '',
       technicianName: db.technicians.find(t => t.id === formData.technicianId)?.name || '',
       isCurtain,
       calculated: { travelCost, ladderCost, scaffoldCost, motorCost, installCost, otherCost, grandTotal },
-      isClaimed: false
+      isClaimed: editingRecord ? editingRecord.isClaimed : false
     };
-    onSave(newRecord);
-    showAlert('บันทึกข้อมูลสำเร็จ!');
-    setFormData({...formData, orderNo: '', customerName: '', quantity: 0, ladderQty: 0, scaffoldQty: 0, motorQty: 0, otherExpense: 0});
+
+    if (editingRecord) {
+      onUpdate(recordToSave);
+      showAlert('อัปเดตข้อมูลสำเร็จ!');
+    } else {
+      onSave(recordToSave);
+      showAlert('บันทึกข้อมูลสำเร็จ!');
+      setFormData(defaultEmptyForm);
+    }
   };
 
   const submitForm = (e) => {
@@ -256,7 +300,7 @@ const DataEntry = ({ db, records, onSave, showAlert, showConfirm }) => {
       if (!formData.orderNo || !formData.orderNo.trim()) throw new Error("กรุณากรอกเลขที่ Order");
       if (!formData.customerName || !formData.customerName.trim()) throw new Error("กรุณากรอกชื่อลูกค้า");
 
-      if (formData.orderNo.trim() !== '') {
+      if (formData.orderNo.trim() !== '' && !editingRecord) {
         const isDuplicate = records.some(r => r.orderNo === formData.orderNo && r.jobTypeId === formData.jobTypeId);
         if (isDuplicate) {
           showConfirm(`พบเลขที่ Order: ${formData.orderNo} ประเภทงานนี้ในระบบแล้ว!\nคุณต้องการบันทึกข้อมูลนี้ซ้ำหรือไม่?`, () => {
@@ -276,9 +320,9 @@ const DataEntry = ({ db, records, onSave, showAlert, showConfirm }) => {
       <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-100">
         <h2 className="text-2xl font-bold text-slate-800 flex items-center">
           <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center mr-3 text-blue-600">
-            <PlusCircle size={24} />
+            {editingRecord ? <Edit2 size={24} /> : <PlusCircle size={24} />}
           </div>
-          ฟอร์มบันทึกงานช่าง (Supplier)
+          {editingRecord ? 'แก้ไขข้อมูลงานช่าง' : 'ฟอร์มบันทึกงานช่าง (Supplier)'}
         </h2>
       </div>
       
@@ -389,9 +433,14 @@ const DataEntry = ({ db, records, onSave, showAlert, showConfirm }) => {
           </div>
         </div>
 
-        <div className="flex justify-end pt-4">
-          <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-xl shadow-md transition-all duration-200 ease-in-out transform hover:-translate-y-0.5 flex items-center">
-            <Save className="mr-2" size={20} /> บันทึกข้อมูลงาน
+        <div className="flex justify-end pt-4 space-x-4">
+          {editingRecord && (
+            <button type="button" onClick={onCancelEdit} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 px-8 rounded-xl shadow-sm transition-all duration-200">
+              ยกเลิกการแก้ไข
+            </button>
+          )}
+          <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-xl shadow-md transition-all duration-200 hover:-translate-y-0.5 flex items-center">
+            <Save className="mr-2" size={20} /> {editingRecord ? 'อัปเดตข้อมูล' : 'บันทึกข้อมูลงาน'}
           </button>
         </div>
       </form>
@@ -400,7 +449,7 @@ const DataEntry = ({ db, records, onSave, showAlert, showConfirm }) => {
 };
 
 // 1.5 Record List View
-const RecordListView = ({ db, records }) => {
+const RecordListView = ({ db, records, onEdit, onDelete }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterTech, setFilterTech] = useState('all');
@@ -416,7 +465,7 @@ const RecordListView = ({ db, records }) => {
   });
 
   return (
-    <div className="p-6 bg-white rounded-2xl shadow-sm border border-slate-100 max-w-6xl mx-auto min-h-[80vh]">
+    <div className="p-6 bg-white rounded-2xl shadow-sm border border-slate-100 max-w-7xl mx-auto min-h-[80vh]">
       <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-100">
         <h2 className="text-2xl font-bold text-slate-800 flex items-center">
           <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center mr-3 text-indigo-600">
@@ -475,11 +524,12 @@ const RecordListView = ({ db, records }) => {
                 <th className="py-3 px-4 text-left font-semibold">ประเภทงาน (Operation)</th>
                 <th className="py-3 px-4 text-right font-semibold">ยอดรวม (บาท)</th>
                 <th className="py-3 px-4 text-center font-semibold">สถานะ</th>
+                <th className="py-3 px-4 text-center font-semibold w-24">จัดการ</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredRecords.length === 0 ? (
-                <tr><td colSpan="6" className="text-center py-12 text-slate-500">ไม่พบข้อมูลที่ค้นหา</td></tr>
+                <tr><td colSpan="7" className="text-center py-12 text-slate-500">ไม่พบข้อมูลที่ค้นหา</td></tr>
               ) : (
                 filteredRecords.map(r => (
                   <tr key={r.id} className="hover:bg-slate-50 transition-colors">
@@ -500,6 +550,16 @@ const RecordListView = ({ db, records }) => {
                       {r.isClaimed 
                         ? <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">เบิกแล้ว</span> 
                         : <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">พร้อมเบิก</span>}
+                    </td>
+                    <td className="py-3 px-4 text-center space-x-1.5 flex justify-center">
+                      {!r.isClaimed && (
+                        <button onClick={() => onEdit(r)} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 p-1.5 rounded transition-colors" title="แก้ไข">
+                          <Edit2 size={16}/>
+                        </button>
+                      )}
+                      <button onClick={() => onDelete(r.id)} className="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 p-1.5 rounded transition-colors" title="ลบข้อมูล">
+                        <Trash2 size={16}/>
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -589,6 +649,8 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
         technician: tech.name,
         amount: netTotal,
         recordCount: selectedData.length,
+        recordIds: selectedData.map(r => r.id),
+        status: 'active',
         savedState: {
           reportConfig: rConfig,
           filter: rFilter,
@@ -602,8 +664,14 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
     };
 
     return (
-      <div className="bg-slate-200 min-h-screen p-8 print:p-0 print:bg-white font-sans text-black flex flex-col items-center">
-        <div className="w-full max-w-4xl flex justify-between mb-4 print:hidden bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+      <div className="bg-slate-200 min-h-screen p-8 print:p-0 print:bg-white font-sans text-black flex flex-col items-center relative">
+        {isHistoryView && historyData.status === 'cancelled' && (
+          <div className="absolute top-1/3 opacity-20 pointer-events-none rotate-[-30deg] z-50 select-none">
+            <h1 className="text-9xl font-black text-red-600 border-8 border-red-600 p-8 rounded-3xl uppercase">ยกเลิกแล้ว</h1>
+          </div>
+        )}
+        
+        <div className="w-full max-w-4xl flex justify-between mb-4 print:hidden bg-white p-4 rounded-xl shadow-sm border border-slate-200 z-10">
            <button onClick={() => isHistoryView ? onCloseHistory() : setPrintMode(false)} className="bg-slate-100 text-slate-700 px-5 py-2 rounded-lg font-semibold flex items-center hover:bg-slate-200 transition-colors">
              <X className="mr-2" size={18}/> {isHistoryView ? 'ปิดพรีวิว' : 'กลับไปแก้ไข'}
            </button>
@@ -619,7 +687,7 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
            </div>
         </div>
 
-        <div className="w-full max-w-4xl bg-white p-10 shadow-lg print:shadow-none print:w-full print:p-4 text-[13px] print:text-[11px] leading-relaxed relative">
+        <div className="w-full max-w-4xl bg-white p-10 shadow-lg print:shadow-none print:w-full print:p-4 text-[13px] print:text-[11px] leading-relaxed relative z-10">
           
           <div className="text-center mb-6">
             <h1 className="text-xl print:text-lg font-bold">ใบขออนุมัติเบิกจ่ายเช็ค</h1>
@@ -638,7 +706,7 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
             {tech.bank} สาขา{tech.branch} {tech.accNo}
           </div>
 
-          <table className="w-full border-collapse border border-black mb-4">
+          <table className="w-full border-collapse border border-black mb-4 relative bg-white">
             <thead>
               <tr className="bg-gray-50 print:bg-transparent">
                 <th className="border border-black p-2 w-12 text-center font-semibold">ลำดับที่</th>
@@ -860,7 +928,7 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
 };
 
 // 3. History View
-const HistoryView = ({ history, onViewDocument }) => {
+const HistoryView = ({ history, onViewDocument, onDeleteHistory }) => {
   return (
     <div className="p-6 bg-white rounded-2xl shadow-sm border border-slate-100 max-w-5xl mx-auto min-h-[80vh]">
       <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-100">
@@ -881,23 +949,37 @@ const HistoryView = ({ history, onViewDocument }) => {
                 <th className="py-4 px-4 text-left font-semibold">สั่งจ่ายให้</th>
                 <th className="py-4 px-4 text-center font-semibold">จำนวนรายการ</th>
                 <th className="py-4 px-4 text-right font-semibold">ยอดจ่ายสุทธิ</th>
-                <th className="py-4 px-4 text-center font-semibold">เอกสาร</th>
+                <th className="py-4 px-4 text-center font-semibold">สถานะ</th>
+                <th className="py-4 px-4 text-center font-semibold">จัดการ</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {history.length === 0 ? (
-                <tr><td colSpan="6" className="p-12 text-center text-slate-500">ยังไม่มีประวัติการทำเบิก</td></tr>
+                <tr><td colSpan="7" className="p-12 text-center text-slate-500">ยังไม่มีประวัติการทำเบิก</td></tr>
               ) : (
                 history.map(h => (
-                  <tr key={h.id} className="hover:bg-amber-50 transition-colors">
+                  <tr key={h.id} className={`hover:bg-amber-50 transition-colors ${h.status === 'cancelled' ? 'bg-red-50/50' : ''}`}>
                     <td className="py-3 px-4 font-mono text-xs text-slate-500">{h.id}</td>
                     <td className="py-3 px-4">{new Date(h.date).toLocaleDateString('en-GB')}</td>
                     <td className="py-3 px-4 font-bold text-slate-800">{h.technician}</td>
                     <td className="py-3 px-4 text-center font-semibold text-slate-600">{h.recordCount}</td>
-                    <td className="py-3 px-4 text-right font-bold text-amber-700">{formatCurrency(h.amount)}</td>
+                    <td className="py-3 px-4 text-right font-bold">
+                      <span className={h.status === 'cancelled' ? 'line-through text-slate-400' : 'text-amber-700'}>
+                        {formatCurrency(h.amount)}
+                      </span>
+                    </td>
                     <td className="py-3 px-4 text-center">
-                      <button onClick={() => onViewDocument(h.savedState)} className="inline-flex items-center justify-center text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors w-full font-semibold">
-                        <Eye size={16} className="mr-1.5"/> ดูเอกสาร
+                      {h.status === 'cancelled' 
+                        ? <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold bg-red-100 text-red-700">ยกเลิกแล้ว</span>
+                        : <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold bg-emerald-100 text-emerald-700">ปกติ</span>
+                      }
+                    </td>
+                    <td className="py-3 px-4 text-center flex justify-center space-x-2">
+                      <button onClick={() => onViewDocument({...h.savedState, status: h.status})} className="inline-flex items-center justify-center text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors font-semibold" title="ดูเอกสาร">
+                        <Eye size={16} className="mr-1"/> ดู
+                      </button>
+                      <button onClick={() => onDeleteHistory(h.id)} className="inline-flex items-center justify-center text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors font-semibold" title="ลบประวัติ">
+                        <Trash2 size={16} className="mr-1"/> ลบ
                       </button>
                     </td>
                   </tr>
@@ -1507,22 +1589,24 @@ export default function App() {
   const [records, setRecords] = useState([]); 
   const [claimHistory, setClaimHistory] = useState([]);
   const [loggedInUser, setLoggedInUser] = useState(null);
+  
   const [viewingHistoryRecord, setViewingHistoryRecord] = useState(null);
+  const [editingRecord, setEditingRecord] = useState(null); // สำหรับเก็บ record ที่ต้องการแก้ไข
 
   const [dialog, setDialog] = useState(null);
 
   const showAlert = (message) => setDialog({ message, type: 'alert' });
   const showConfirm = (message, onConfirm) => setDialog({ message, type: 'confirm', onConfirm });
+  const showPrompt = (message, expectedInput, onConfirm) => setDialog({ message, type: 'prompt', expectedInput, onConfirm });
 
   useEffect(() => {
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          // Attempt custom token sign in, but fallback gracefully if it's the wrong project
           try {
             await signInWithCustomToken(auth, __initial_auth_token);
           } catch (tokenErr) {
-            console.warn("Custom token mismatch (likely using own Firebase config), falling back to anonymous auth...");
+            console.warn("Custom token mismatch, falling back to anonymous auth...");
             await signInAnonymously(auth);
           }
         } else {
@@ -1581,6 +1665,52 @@ export default function App() {
     setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', newRecord.id), newRecord).catch(console.error);
   };
 
+  const handleUpdateRecord = (updatedRecord) => {
+    if (!firebaseUser) return;
+    setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', updatedRecord.id), updatedRecord).catch(console.error);
+    setEditingRecord(null); // เคลียร์โหมดแก้ไข
+  };
+
+  const handleDeleteRecord = (id) => {
+    const recToDelete = records.find(r => r.id === id);
+    if (!recToDelete) return;
+
+    if (firebaseUser) {
+      deleteDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', id)).catch(console.error);
+    }
+
+    // ถ้ารายการนี้ถูกเบิกไปแล้ว ให้ยกเลิกใบเบิกนั้นด้วย
+    if (recToDelete.isClaimed) {
+      // รองรับทั้งโครงสร้างข้อมูลใหม่และเก่าที่บันทึกไปก่อนหน้านี้
+      const historiesToCancel = claimHistory.filter(h => {
+        if (h.recordIds && h.recordIds.includes(id)) return true;
+        if (h.savedState && h.savedState.selectedData && h.savedState.selectedData.some(r => r.id === id)) return true;
+        return false;
+      });
+
+      historiesToCancel.forEach(h => {
+        // ปลดล็อครายการงานอื่นๆ ที่อยู่ในบิลเดียวกันให้กลับมาพร้อมเบิก
+        const relatedIds = h.recordIds || (h.savedState?.selectedData?.map(r => r.id)) || [];
+        relatedIds.forEach(rId => {
+          if (rId !== id) {
+            const rec = records.find(r => r.id === rId);
+            if (rec) {
+              if (firebaseUser) {
+                setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', rId), { ...rec, isClaimed: false }).catch(console.error);
+              }
+            }
+          }
+        });
+        
+        // อัปเดตสถานะบิลเป็น cancelled
+        const updatedH = { ...h, status: 'cancelled' };
+        if (firebaseUser) {
+          setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'claimHistory', h.id), updatedH).catch(console.error);
+        }
+      });
+    }
+  };
+
   const handleClaimRecords = (recordIds, claimInfo) => {
     if (!firebaseUser) return;
     recordIds.forEach(id => {
@@ -1601,6 +1731,47 @@ export default function App() {
 
   const openHistoryReport = (savedState) => setViewingHistoryRecord(savedState);
   const closeHistoryReport = () => setViewingHistoryRecord(null);
+
+  const startEditingRecord = (record) => {
+    setEditingRecord(record);
+    setActiveTab('entry'); // เด้งไปหน้าฟอร์มกรอกข้อมูล
+  };
+
+  const cancelEditingRecord = () => {
+    setEditingRecord(null);
+  };
+
+  const triggerDelete = (id) => {
+    showPrompt('ยืนยันการลบรายการนี้?\n(หากเป็นรายการที่เบิกไปแล้ว ใบเบิกจะถูกยกเลิกด้วย)\n\nกรุณาพิมพ์ "confirm" เพื่อยืนยัน:', 'confirm', () => {
+      handleDeleteRecord(id);
+    });
+  };
+
+  const triggerDeleteHistory = (id) => {
+    showPrompt('ยืนยันการลบประวัติการเบิกจ่ายนี้?\n(รายการงานในบิลนี้จะกลับไปสถานะ "พร้อมเบิก")\n\nพิมพ์ "confirm" เพื่อยืนยัน:', 'confirm', () => {
+      handleDeleteHistory(id);
+    });
+  };
+
+  const handleDeleteHistory = (id) => {
+    const histToDelete = claimHistory.find(h => h.id === id);
+    if (!histToDelete) return;
+
+    if (firebaseUser) {
+      deleteDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'claimHistory', id)).catch(console.error);
+    }
+
+    // คืนสถานะรายการงานที่ผูกกับบิลนี้ให้เป็น isClaimed: false (เพื่อให้เบิกใหม่ได้)
+    const relatedIds = histToDelete.recordIds || (histToDelete.savedState?.selectedData?.map(r => r.id)) || [];
+    relatedIds.forEach(rId => {
+      const rec = records.find(r => r.id === rId);
+      if (rec && rec.isClaimed) {
+        if (firebaseUser) {
+          setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', rId), { ...rec, isClaimed: false }).catch(console.error);
+        }
+      }
+    });
+  };
 
   const menuItems = [
     { id: 'entry', label: 'ฟอร์มบันทึกงาน', icon: <PlusCircle size={20} /> },
@@ -1664,7 +1835,7 @@ export default function App() {
               {menuItems.map(item => (
                 <li key={item.id}>
                   <button
-                    onClick={() => { setActiveTab(item.id); setViewingHistoryRecord(null); }}
+                    onClick={() => { setActiveTab(item.id); setViewingHistoryRecord(null); if (item.id !== 'entry') setEditingRecord(null); }}
                     className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 ${
                       activeTab === item.id && !viewingHistoryRecord 
                         ? 'bg-blue-600 text-white shadow-md font-semibold transform translate-x-1' 
@@ -1684,7 +1855,7 @@ export default function App() {
            {menuItems.map(item => (
             <button
               key={item.id}
-              onClick={() => { setActiveTab(item.id); setViewingHistoryRecord(null); }}
+              onClick={() => { setActiveTab(item.id); setViewingHistoryRecord(null); if (item.id !== 'entry') setEditingRecord(null); }}
               className={`flex flex-col items-center flex-shrink-0 px-5 py-3 text-xs gap-1 border-b-2 transition-all ${
                 activeTab === item.id && !viewingHistoryRecord 
                   ? 'border-blue-600 text-blue-700 font-bold bg-blue-50' 
@@ -1702,10 +1873,10 @@ export default function App() {
             <ReportView db={db} records={records} historyData={viewingHistoryRecord} onCloseHistory={closeHistoryReport} onClaimRecords={handleClaimRecords} />
           ) : (
             <div className="animate-in fade-in duration-300">
-              {activeTab === 'entry' && <DataEntry db={db} records={records} onSave={handleSaveRecord} showAlert={showAlert} showConfirm={showConfirm} />}
-              {activeTab === 'record-list' && <RecordListView db={db} records={records} />}
+              {activeTab === 'entry' && <DataEntry db={db} records={records} onSave={handleSaveRecord} onUpdate={handleUpdateRecord} editingRecord={editingRecord} onCancelEdit={cancelEditingRecord} showAlert={showAlert} showConfirm={showConfirm} />}
+              {activeTab === 'record-list' && <RecordListView db={db} records={records} onEdit={startEditingRecord} onDelete={triggerDelete} />}
               {activeTab === 'report' && <ReportView db={db} records={records} onClaimRecords={handleClaimRecords} />}
-              {activeTab === 'history' && <HistoryView history={claimHistory} onViewDocument={openHistoryReport} />}
+              {activeTab === 'history' && <HistoryView history={claimHistory} onViewDocument={openHistoryReport} onDeleteHistory={triggerDeleteHistory} />}
               {activeTab === 'dashboard' && <Dashboard records={records} />}
               {activeTab === 'database' && <DatabaseView db={db} setDb={updateDb} showAlert={showAlert} showConfirm={showConfirm} />}
             </div>
