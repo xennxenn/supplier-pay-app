@@ -258,8 +258,8 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
   
   let installCost = 0;
   if (isCurtain) {
-    const activeRails = Math.max(0, formData.quantity - formData.motorQty);
-    if (activeRails <= 10 && formData.quantity > 0) {
+    const activeRails = formData.quantity; // คิดจากจำนวนรางเต็มๆ ไม่นำ motorQty มาหักลบแล้ว
+    if (activeRails <= 10 && activeRails > 0) {
       installCost = db.rates.curtainBase;
     } else if (activeRails > 10) {
       installCost = db.rates.curtainBase + ((activeRails - 10) * db.rates.curtainPerRailExceed);
