@@ -22,7 +22,8 @@ import {
   Lock,
   Loader2,
   AlertCircle,
-  AlertTriangle
+  AlertTriangle,
+  Unlock
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -32,7 +33,7 @@ import {
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, updateDoc, writeBatch } from 'firebase/firestore';
 
 // --- FIREBASE INITIALIZATION ---
 const firebaseConfig = {
@@ -449,7 +450,7 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
 };
 
 // 1.5 Record List View
-const RecordListView = ({ db, records, onEdit, onDelete }) => {
+const RecordListView = ({ db, records, onEdit, onDelete, onUnlock }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterTech, setFilterTech] = useState('all');
@@ -552,9 +553,13 @@ const RecordListView = ({ db, records, onEdit, onDelete }) => {
                         : <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">พร้อมเบิก</span>}
                     </td>
                     <td className="py-3 px-4 text-center space-x-1.5 flex justify-center">
-                      {!r.isClaimed && (
+                      {!r.isClaimed ? (
                         <button onClick={() => onEdit(r)} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 p-1.5 rounded transition-colors" title="แก้ไข">
                           <Edit2 size={16}/>
+                        </button>
+                      ) : (
+                        <button onClick={() => onUnlock(r.id)} className="text-amber-500 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 p-1.5 rounded transition-colors" title="ปลดล็อคสถานะให้กลับมาพร้อมเบิก">
+                          <Unlock size={16}/>
                         </button>
                       )}
                       <button onClick={() => onDelete(r.id)} className="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 p-1.5 rounded transition-colors" title="ลบข้อมูล">
@@ -598,6 +603,20 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
   const dataToRender = isHistoryView ? historyData.selectedData : records.filter(r => r.technicianId === filter.technicianId && r.date >= filter.startDate && r.date <= filter.endDate);
   const selectedData = isHistoryView ? historyData.selectedData : dataToRender.filter(r => selectedRecords[r.id]);
   const hasSelected = selectedData.length > 0;
+
+  const handleSelectAll = (e) => {
+    const isChecked = e.target.checked;
+    const newSelected = { ...selectedRecords };
+    dataToRender.forEach(r => {
+      if (!r.isClaimed) {
+        newSelected[r.id] = isChecked;
+      }
+    });
+    setSelectedRecords(newSelected);
+  };
+
+  const allSelectable = dataToRender.filter(r => !r.isClaimed);
+  const isAllSelected = allSelectable.length > 0 && allSelectable.every(r => selectedRecords[r.id]);
 
   if (printMode) {
     const rConfig = isHistoryView ? historyData.reportConfig : reportConfig;
@@ -659,7 +678,8 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
           dateRangeText
         }
       };
-      onClaimRecords(Object.keys(selectedRecords).filter(k => selectedRecords[k]), claimInfo);
+      // ส่งเฉพาะ ID ของงานที่ถูกโชว์อยู่ในใบพรีวิวไปอัปเดตสถานะ ป้องกันการตกหล่น
+      onClaimRecords(selectedData.map(r => r.id), claimInfo);
       setPrintMode(false);
     };
 
@@ -800,7 +820,7 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
               <tr className="bg-gray-50 print:bg-transparent border-t border-black">
                 <td className="border border-black p-2 text-center font-bold align-middle">รวม:</td>
                 <td className="border border-black p-2 text-center font-semibold align-middle">
-                  {bahtTexts.baht}{bahtTexts.satang === 'ถ้วน' ? 'ถ้วน' : `สตางค์ ${bahtTexts.satang}`}
+                  {bahtTexts.baht}{bahtTexts.satang === 'ถ้วน' ? 'ถ้วน' : `${bahtTexts.satang}สตางค์`}
                 </td>
                 <td className="border border-black p-2 text-center font-semibold align-middle"></td>
                 <td className="border border-black p-2 text-right font-bold align-middle">
@@ -880,7 +900,12 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
           <table className="min-w-full bg-white text-sm relative">
             <thead className="bg-slate-800 text-white sticky top-0 z-10">
               <tr>
-                <th className="py-3 px-4 text-center w-16 font-semibold">เลือก</th>
+                <th className="py-3 px-4 text-center w-16 font-semibold">
+                  <div className="flex flex-col items-center">
+                    <input type="checkbox" className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer" checked={isAllSelected} onChange={handleSelectAll} disabled={allSelectable.length === 0} />
+                    <span className="text-[10px] mt-1 font-normal opacity-80">ทั้งหมด</span>
+                  </div>
+                </th>
                 <th className="py-3 px-4 text-left font-semibold">วันที่</th>
                 <th className="py-3 px-4 text-left font-semibold">Operation</th>
                 <th className="py-3 px-4 text-left font-semibold">Order / ลูกค้า</th>
@@ -997,6 +1022,8 @@ const HistoryView = ({ history, onViewDocument, onDeleteHistory }) => {
 const Dashboard = ({ records }) => {
   const summary = useMemo(() => {
     let totalExps = 0;
+    let claimedCount = 0;
+    let unclaimedCount = 0;
     const byOp = {};
     const byTech = {};
     const byMonth = {};
@@ -1004,6 +1031,12 @@ const Dashboard = ({ records }) => {
     records.forEach(r => {
       totalExps += r.calculated.grandTotal;
       
+      if (r.isClaimed) {
+        claimedCount += 1;
+      } else {
+        unclaimedCount += 1;
+      }
+
       const monthKey = r.date.substring(0, 7);
       byMonth[monthKey] = (byMonth[monthKey] || { total: 0, count: 0 });
       byMonth[monthKey].total += r.calculated.grandTotal;
@@ -1022,7 +1055,7 @@ const Dashboard = ({ records }) => {
     const techData = Object.keys(byTech).map(k => ({ name: k, value: byTech[k].total, count: byTech[k].count }));
     const monthData = Object.keys(byMonth).sort().map(k => ({ name: k, value: byMonth[k].total, count: byMonth[k].count }));
 
-    return { totalExps, totalJobs: records.length, opData, techData, monthData };
+    return { totalExps, totalJobs: records.length, claimedCount, unclaimedCount, opData, techData, monthData };
   }, [records]);
 
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6'];
@@ -1039,17 +1072,23 @@ const Dashboard = ({ records }) => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden flex flex-col justify-center">
           <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500"></div>
           <h3 className="text-slate-500 text-sm font-bold uppercase tracking-wider">ยอดค่าใช้จ่ายรวมทั้งหมด</h3>
           <p className="text-4xl font-black text-slate-800 mt-2">฿{formatCurrency(summary.totalExps)}</p>
         </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden flex flex-col justify-center">
           <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500"></div>
           <h3 className="text-slate-500 text-sm font-bold uppercase tracking-wider">จำนวนงานทั้งหมด</h3>
-          <p className="text-4xl font-black text-slate-800 mt-2">{summary.totalJobs} <span className="text-xl font-semibold text-slate-400">งาน</span></p>
+          <div className="flex items-baseline mt-2">
+            <p className="text-4xl font-black text-slate-800">{summary.totalJobs} <span className="text-xl font-semibold text-slate-400">งาน</span></p>
+          </div>
+          <div className="mt-4 flex gap-3 text-sm font-semibold">
+            <div className="text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-lg">เบิกแล้ว: {summary.claimedCount}</div>
+            <div className="text-amber-700 bg-amber-100 px-2.5 py-1 rounded-lg">พร้อมเบิก: {summary.unclaimedCount}</div>
+          </div>
         </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden flex flex-col justify-center">
           <div className="absolute top-0 left-0 w-1.5 h-full bg-amber-500"></div>
           <h3 className="text-slate-500 text-sm font-bold uppercase tracking-wider">จำนวนเดือนที่บันทึก</h3>
           <p className="text-4xl font-black text-slate-800 mt-2">{summary.monthData.length} <span className="text-xl font-semibold text-slate-400">เดือน</span></p>
@@ -1660,73 +1699,86 @@ export default function App() {
     return () => { unsubDb(); unsubRecords(); unsubHistory(); };
   }, [firebaseUser]);
 
-  const handleSaveRecord = (newRecord) => {
+  const handleSaveRecord = async (newRecord) => {
     if (!firebaseUser) return;
-    setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', newRecord.id), newRecord).catch(console.error);
+    try {
+      await setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', newRecord.id), newRecord);
+    } catch(e) { console.error(e); }
   };
 
-  const handleUpdateRecord = (updatedRecord) => {
+  const handleUpdateRecord = async (updatedRecord) => {
     if (!firebaseUser) return;
-    setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', updatedRecord.id), updatedRecord).catch(console.error);
-    setEditingRecord(null); // เคลียร์โหมดแก้ไข
+    try {
+      await setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', updatedRecord.id), updatedRecord);
+      setEditingRecord(null); // เคลียร์โหมดแก้ไข
+    } catch(e) { console.error(e); }
   };
 
-  const handleDeleteRecord = (id) => {
+  const handleDeleteRecord = async (id) => {
     const recToDelete = records.find(r => r.id === id);
-    if (!recToDelete) return;
+    if (!recToDelete || !firebaseUser) return;
 
-    if (firebaseUser) {
-      deleteDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', id)).catch(console.error);
-    }
+    try {
+      // ใช้ระบบ Batch ควบคุมการอัปเดตแบบเกี่ยวเนื่อง (Cascade) ถ้างานนี้เคยเบิกไปแล้ว ให้ยกเลิกประวัติเบิกด้วย
+      const batch = writeBatch(firestoreDb);
+      
+      const recordRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', id);
+      batch.delete(recordRef);
 
-    // ถ้ารายการนี้ถูกเบิกไปแล้ว ให้ยกเลิกใบเบิกนั้นด้วย
-    if (recToDelete.isClaimed) {
-      // รองรับทั้งโครงสร้างข้อมูลใหม่และเก่าที่บันทึกไปก่อนหน้านี้
-      const historiesToCancel = claimHistory.filter(h => {
-        if (h.recordIds && h.recordIds.includes(id)) return true;
-        if (h.savedState && h.savedState.selectedData && h.savedState.selectedData.some(r => r.id === id)) return true;
-        return false;
-      });
-
-      historiesToCancel.forEach(h => {
-        // ปลดล็อครายการงานอื่นๆ ที่อยู่ในบิลเดียวกันให้กลับมาพร้อมเบิก
-        const relatedIds = h.recordIds || (h.savedState?.selectedData?.map(r => r.id)) || [];
-        relatedIds.forEach(rId => {
-          if (rId !== id) {
-            const rec = records.find(r => r.id === rId);
-            if (rec) {
-              if (firebaseUser) {
-                setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', rId), { ...rec, isClaimed: false }).catch(console.error);
-              }
-            }
-          }
+      if (recToDelete.isClaimed) {
+        const historiesToCancel = claimHistory.filter(h => {
+          if (h.recordIds && h.recordIds.includes(id)) return true;
+          if (h.savedState && h.savedState.selectedData && h.savedState.selectedData.some(r => r.id === id)) return true;
+          return false;
         });
-        
-        // อัปเดตสถานะบิลเป็น cancelled
-        const updatedH = { ...h, status: 'cancelled' };
-        if (firebaseUser) {
-          setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'claimHistory', h.id), updatedH).catch(console.error);
-        }
-      });
+
+        historiesToCancel.forEach(h => {
+          const historyRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'claimHistory', h.id);
+          batch.update(historyRef, { status: 'cancelled' });
+
+          const relatedIds = h.recordIds || (h.savedState?.selectedData?.map(r => r.id)) || [];
+          relatedIds.forEach(rId => {
+            if (rId !== id) {
+              const relatedRecRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', rId);
+              batch.update(relatedRecRef, { isClaimed: false });
+            }
+          });
+        });
+      }
+
+      await batch.commit();
+    } catch(e) {
+      console.error("Batch delete failed", e);
     }
   };
 
-  const handleClaimRecords = (recordIds, claimInfo) => {
+  const handleClaimRecords = async (recordIds, claimInfo) => {
     if (!firebaseUser) return;
-    recordIds.forEach(id => {
-      const rec = records.find(r => r.id === id);
-      if (rec) {
-        setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', id), { ...rec, isClaimed: true }).catch(console.error);
-      }
-    });
-    setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'claimHistory', claimInfo.id), claimInfo).then(() => {
-      showAlert('บันทึกประวัติการเบิกเรียบร้อยแล้ว');
-    }).catch(console.error);
+    try {
+      // ใช้ระบบ Batch (กลุ่มคำสั่ง) เพื่อบังคับว่า "บันทึกประวัติ" และ "เปลี่ยนสถานะงาน" ต้องสำเร็จไปพร้อมกันเท่านั้น
+      const batch = writeBatch(firestoreDb);
+
+      const historyRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'claimHistory', claimInfo.id);
+      batch.set(historyRef, claimInfo);
+
+      recordIds.forEach(id => {
+        const recordRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', id);
+        batch.update(recordRef, { isClaimed: true });
+      });
+
+      await batch.commit();
+      showAlert('บันทึกประวัติการเบิกและอัปเดตสถานะงานสำเร็จเรียบร้อย');
+    } catch (e) {
+      console.error(e);
+      showAlert('เกิดข้อผิดพลาดในการเชื่อมต่อข้อมูล กรุณาลองใหม่อีกครั้ง');
+    }
   };
 
-  const updateDb = (newDb) => {
+  const updateDb = async (newDb) => {
     if (!firebaseUser) return;
-    setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'appState', 'main'), newDb).catch(console.error);
+    try {
+      await setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'appState', 'main'), newDb);
+    } catch(e) { console.error(e); }
   };
 
   const openHistoryReport = (savedState) => setViewingHistoryRecord(savedState);
@@ -1747,30 +1799,50 @@ export default function App() {
     });
   };
 
+  const triggerUnlock = (id) => {
+    showConfirm('ต้องการปลดล็อคงานนี้ให้กลับมาเป็น "พร้อมเบิก" ใช่หรือไม่?\n\n(ใช้ในกรณีระบบขัดข้อง งานขึ้นสถานะเบิกแล้วแต่ไม่มีในประวัติ)', () => {
+      handleUnlockRecord(id);
+    });
+  };
+
+  const handleUnlockRecord = async (id) => {
+    if (!firebaseUser) return;
+    try {
+      await updateDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', id), { isClaimed: false });
+      showAlert('ปลดล็อคสถานะงานเรียบร้อยแล้ว');
+    } catch (e) {
+      console.error(e);
+      showAlert('เกิดข้อผิดพลาดในการปลดล็อค');
+    }
+  };
+
   const triggerDeleteHistory = (id) => {
     showPrompt('ยืนยันการลบประวัติการเบิกจ่ายนี้?\n(รายการงานในบิลนี้จะกลับไปสถานะ "พร้อมเบิก")\n\nพิมพ์ "confirm" เพื่อยืนยัน:', 'confirm', () => {
       handleDeleteHistory(id);
     });
   };
 
-  const handleDeleteHistory = (id) => {
+  const handleDeleteHistory = async (id) => {
     const histToDelete = claimHistory.find(h => h.id === id);
-    if (!histToDelete) return;
+    if (!histToDelete || !firebaseUser) return;
 
-    if (firebaseUser) {
-      deleteDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'claimHistory', id)).catch(console.error);
-    }
+    try {
+      // 1. ลบประวัติ
+      await deleteDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'claimHistory', id));
 
-    // คืนสถานะรายการงานที่ผูกกับบิลนี้ให้เป็น isClaimed: false (เพื่อให้เบิกใหม่ได้)
-    const relatedIds = histToDelete.recordIds || (histToDelete.savedState?.selectedData?.map(r => r.id)) || [];
-    relatedIds.forEach(rId => {
-      const rec = records.find(r => r.id === rId);
-      if (rec && rec.isClaimed) {
-        if (firebaseUser) {
-          setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', rId), { ...rec, isClaimed: false }).catch(console.error);
+      // 2. อัปเดตงานในประวัตินั้นกลับมาเป็น "พร้อมเบิก" อย่างปลอดภัยทีละรายการ
+      const relatedIds = histToDelete.recordIds || (histToDelete.savedState?.selectedData?.map(r => r.id)) || [];
+      const updatePromises = relatedIds.map(rId => {
+        const rec = records.find(r => r.id === rId);
+        if (rec) {
+          return updateDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', rId), { isClaimed: false });
         }
-      }
-    });
+        return Promise.resolve();
+      });
+      await Promise.allSettled(updatePromises);
+    } catch(e) {
+      console.error(e);
+    }
   };
 
   const menuItems = [
@@ -1874,7 +1946,7 @@ export default function App() {
           ) : (
             <div className="animate-in fade-in duration-300">
               {activeTab === 'entry' && <DataEntry db={db} records={records} onSave={handleSaveRecord} onUpdate={handleUpdateRecord} editingRecord={editingRecord} onCancelEdit={cancelEditingRecord} showAlert={showAlert} showConfirm={showConfirm} />}
-              {activeTab === 'record-list' && <RecordListView db={db} records={records} onEdit={startEditingRecord} onDelete={triggerDelete} />}
+              {activeTab === 'record-list' && <RecordListView db={db} records={records} onEdit={startEditingRecord} onDelete={triggerDelete} onUnlock={triggerUnlock} />}
               {activeTab === 'report' && <ReportView db={db} records={records} onClaimRecords={handleClaimRecords} />}
               {activeTab === 'history' && <HistoryView history={claimHistory} onViewDocument={openHistoryReport} onDeleteHistory={triggerDeleteHistory} />}
               {activeTab === 'dashboard' && <Dashboard records={records} />}
