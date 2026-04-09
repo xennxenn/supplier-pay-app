@@ -65,10 +65,10 @@ const initialDB = {
     transferDayRule: "ทุกวันพฤหัสบดี"
   },
   provinces: [
-    { name: 'กรุงเทพมหานคร', travelCost: 500 },
-    { name: 'นนทบุรี', travelCost: 600 },
-    { name: 'ปทุมธานี', travelCost: 700 },
-    { name: 'สมุทรปราการ', travelCost: 600 },
+    { id: 'PRV1', name: 'กรุงเทพมหานคร', travelCost: 500, startDate: '', endDate: '' },
+    { id: 'PRV2', name: 'นนทบุรี', travelCost: 600, startDate: '', endDate: '' },
+    { id: 'PRV3', name: 'ปทุมธานี', travelCost: 700, startDate: '', endDate: '' },
+    { id: 'PRV4', name: 'สมุทรปราการ', travelCost: 600, startDate: '', endDate: '' },
   ],
   technicians: [
     { id: 'T01', name: 'นายสรวิชญ์ สมานคำ', bank: 'กสิกรไทย', branch: 'สำนักราษฎร์บูรณะ', accNo: '745-2-34964-1' },
@@ -251,7 +251,16 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
   const currentJobType = db.jobTypes.find(j => j.id === formData.jobTypeId);
   const isCurtain = currentJobType?.category === 'curtain';
 
-  const travelCost = db.provinces.find(p => p.name === formData.province)?.travelCost || 0;
+  // --- Updated Travel Cost Logic ---
+  const jobDateStr = formData.date;
+  const provs = db.provinces.filter(p => p.name === formData.province);
+  let applicableProv = provs.find(p => p.startDate && p.endDate && jobDateStr >= p.startDate && jobDateStr <= p.endDate)
+                    || provs.find(p => p.startDate && !p.endDate && jobDateStr >= p.startDate)
+                    || provs.find(p => !p.startDate && p.endDate && jobDateStr <= p.endDate)
+                    || provs.find(p => !p.startDate && !p.endDate);
+  const travelCost = applicableProv ? applicableProv.travelCost : 0;
+  // ---------------------------------
+  
   const ladderCost = formData.ladderQty * db.rates.highLadder;
   const scaffoldCost = formData.scaffoldQty * (isCurtain ? db.rates.scaffoldCurtain : db.rates.scaffoldWall);
   const motorCost = formData.motorQty * db.rates.motorInstall;
@@ -292,6 +301,8 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
       setFormData(defaultEmptyForm);
     }
   };
+
+  const uniqueProvinces = [...new Set(db.provinces.map(p => p.name))];
 
   const submitForm = (e) => {
     e.preventDefault();
@@ -368,7 +379,15 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
               <label className="block text-sm font-semibold text-slate-700 mb-2">จังหวัดที่ติดตั้ง (ค่าเดินทาง)</label>
               <select value={formData.province} onChange={e => setFormData({...formData, province: e.target.value})} className="w-full rounded-lg border-slate-200 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border transition-all bg-white">
                 <option value="">-- ไม่คิดค่าเดินทาง --</option>
-                {db.provinces.map(p => <option key={p.name} value={p.name}>{p.name} (฿{p.travelCost})</option>)}
+                {uniqueProvinces.map(pName => {
+                  const pProvs = db.provinces.filter(p => p.name === pName);
+                  let pApp = pProvs.find(p => p.startDate && p.endDate && formData.date >= p.startDate && formData.date <= p.endDate)
+                                  || pProvs.find(p => p.startDate && !p.endDate && formData.date >= p.startDate)
+                                  || pProvs.find(p => !p.startDate && p.endDate && formData.date <= p.endDate)
+                                  || pProvs.find(p => !p.startDate && !p.endDate);
+                  const pCost = pApp ? pApp.travelCost : 0;
+                  return <option key={pName} value={pName}>{pName} (฿{pCost})</option>
+                })}
               </select>
             </div>
             <div>
@@ -774,7 +793,7 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
                         <tr>
                           <td className="border-l border-r border-black p-1"></td>
                           <td className="border-l border-r border-black p-1 px-4">
-                            งานติดตั้ง{job.customerName} {job.orderNo} เซลล์ {job.salesperson} - {job.calculated.installCost.toLocaleString('en-US', { minimumFractionDigits: 0 })} บาท
+                            งานติดตั้ง{job.customerName} {job.orderNo} เซลล์ {job.salesperson} - {(job.calculated.installCost + (job.calculated.otherCost || 0)).toLocaleString('en-US', { minimumFractionDigits: 0 })} บาท
                           </td>
                           <td className="border-l border-r border-black p-1"></td>
                           <td className="border-l border-r border-black p-1"></td>
@@ -1189,7 +1208,7 @@ const Dashboard = ({ records }) => {
 // 5. Database View (With Import)
 const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const [newTech, setNewTech] = useState({ name: '', bank: '', branch: '', accNo: '' });
-  const [newProv, setNewProv] = useState({ name: '', travelCost: '' });
+  const [newProv, setNewProv] = useState({ name: '', travelCost: '', startDate: '', endDate: '' });
   const [newAppr, setNewAppr] = useState({ name: '' });
   const [newAdmin, setNewAdmin] = useState({ name: '' });
   const [newUser, setNewUser] = useState({ username: '', name: '', password: '' });
@@ -1206,14 +1225,14 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const [importHasHeader, setImportHasHeader] = useState(true);
 
   const handleAddTech = () => { if (newTech.name) { setDb({ ...db, technicians: [...db.technicians, { ...newTech, id: 'T' + Date.now() }] }); setNewTech({ name: '', bank: '', branch: '', accNo: '' }); } };
-  const handleAddProv = () => { if (newProv.name) { setDb({ ...db, provinces: [...db.provinces, { name: newProv.name, travelCost: Number(newProv.travelCost) }] }); setNewProv({ name: '', travelCost: '' }); } };
+  const handleAddProv = () => { if (newProv.name) { setDb({ ...db, provinces: [...db.provinces, { ...newProv, id: 'PRV' + Date.now(), travelCost: Number(newProv.travelCost) }] }); setNewProv({ name: '', travelCost: '', startDate: '', endDate: '' }); } };
   const handleAddAppr = () => { if (newAppr.name) { setDb({ ...db, approvers: [...db.approvers, { id: 'AP' + Date.now(), name: newAppr.name }] }); setNewAppr({ name: '' }); } };
   const handleAddAdmin = () => { if (newAdmin.name) { setDb({ ...db, admins: [...(db.admins || []), { id: 'A' + Date.now(), name: newAdmin.name }] }); setNewAdmin({ name: '' }); } };
   const handleAddUser = () => { if (newUser.username && newUser.password) { setDb({ ...db, users: [...(db.users || []), { ...newUser, id: 'U' + Date.now() }] }); setNewUser({ username: '', name: '', password: '' }); } };
   const handleAddOp = () => { if (newOp.name) { setDb({ ...db, operations: [...(db.operations || []), { id: 'OP' + Date.now(), name: newOp.name, sales: [] }] }); setNewOp({ name: '' }); } };
 
   const handleDeleteTech = (id) => { showConfirm('ยืนยันการลบช่าง?', () => { setDb({ ...db, technicians: db.technicians.filter(t => t.id !== id) }); }); };
-  const handleDeleteProv = (name) => { showConfirm('ยืนยันการลบจังหวัด?', () => { setDb({ ...db, provinces: db.provinces.filter(p => p.name !== name) }); }); };
+  const handleDeleteProv = (id) => { showConfirm('ยืนยันการลบอัตราค่าเดินทางนี้?', () => { setDb({ ...db, provinces: db.provinces.filter(p => (p.id || p.name) !== id) }); }); };
   const handleDeleteAppr = (id) => { showConfirm('ยืนยันการลบผู้อนุมัติ?', () => { setDb({ ...db, approvers: db.approvers.filter(a => a.id !== id) }); }); };
   const handleDeleteAdmin = (id) => { showConfirm('ยืนยันการลบผู้ทำเบิก?', () => { setDb({ ...db, admins: db.admins.filter(a => a.id !== id) }); }); };
   const handleDeleteUser = (id) => { showConfirm('ยืนยันการลบผู้ใช้งาน?', () => { setDb({ ...db, users: db.users.filter(u => u.id !== id) }); }); };
@@ -1229,7 +1248,7 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const handleDeleteSales = (opId, sName) => { showConfirm(`ยืนยันการลบพนักงานเซลล์: ${sName}?`, () => { setDb({ ...db, operations: db.operations.map(o => o.id === opId ? { ...o, sales: o.sales.filter(s => s !== sName) } : o) }); }); };
 
   const handleSaveTech = () => { setDb({ ...db, technicians: db.technicians.map(t => t.id === editingTech.id ? editingTech : t) }); setEditingTech(null); };
-  const handleSaveProv = () => { setDb({ ...db, provinces: db.provinces.map(p => p.name === editingProv.oldName ? { name: editingProv.name, travelCost: Number(editingProv.travelCost) } : p) }); setEditingProv(null); };
+  const handleSaveProv = () => { setDb({ ...db, provinces: db.provinces.map(p => (p.id || p.name) === (editingProv.id || editingProv.oldName) ? { ...editingProv, travelCost: Number(editingProv.travelCost) } : p) }); setEditingProv(null); };
   const handleSaveAppr = () => { setDb({ ...db, approvers: db.approvers.map(a => a.id === editingAppr.id ? editingAppr : a) }); setEditingAppr(null); };
   const handleSaveAdmin = () => { setDb({ ...db, admins: db.admins.map(a => a.id === editingAdmin.id ? editingAdmin : a) }); setEditingAdmin(null); };
   const handleSaveUser = () => { setDb({ ...db, users: db.users.map(u => u.id === editingUser.id ? editingUser : u) }); setEditingUser(null); };
@@ -1256,10 +1275,15 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
           addedCount++;
         } 
         else if (importType === 'provinces' && cols.length >= 1) {
-          if (!newDb.provinces.find(p => p.name === cols[0])) {
-            newDb.provinces.push({ name: cols[0], travelCost: Number(cols[1]) || 0 });
-            addedCount++;
-          }
+          // อัปเดตให้รองรับการ Import วันที่ และอนุญาตให้นำเข้าชื่อจังหวัดซ้ำได้ (เพราะอาจจะคนละช่วงวันที่)
+          newDb.provinces.push({ 
+            id: 'PRV_IMP' + Date.now() + index, 
+            name: cols[0], 
+            travelCost: Number(cols[1]) || 0,
+            startDate: cols[2] || '',
+            endDate: cols[3] || ''
+          });
+          addedCount++;
         }
         else if (importType === 'approvers' && cols.length >= 1) {
           newDb.approvers.push({ id: 'AP_IMP' + Date.now() + index, name: cols[0] });
@@ -1292,7 +1316,7 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
       <div className="bg-gradient-to-r from-slate-50 to-blue-50 p-6 rounded-xl border border-blue-100 shadow-sm flex flex-col md:flex-row items-center gap-6 justify-between">
         <div className="flex-1">
           <h3 className="font-bold text-lg text-blue-900 flex items-center mb-2"><Upload className="mr-2" size={20}/> นำเข้าข้อมูล (Import CSV/TXT)</h3>
-          <p className="text-sm text-slate-600 mb-4">รองรับไฟล์ .csv หรือ .txt ที่คั่นด้วยลูกน้ำ (,) <br/>รูปแบบคอลัมน์ ทีมช่าง: ชื่อ,ธนาคาร,สาขา,เลขบัญชี | จังหวัด: ชื่อ,ราคา</p>
+          <p className="text-sm text-slate-600 mb-4">รองรับไฟล์ .csv หรือ .txt ที่คั่นด้วยลูกน้ำ (,) <br/>รูปแบบทีมช่าง: <code className="bg-white px-1 rounded text-blue-700">ชื่อ,ธนาคาร,สาขา,เลขบัญชี</code> | จังหวัด: <code className="bg-white px-1 rounded text-blue-700">ชื่อ,ราคา,วันเริ่ม(YYYY-MM-DD),วันสิ้นสุด</code></p>
           <div className="flex gap-4 items-center flex-wrap">
             <select value={importType} onChange={e => setImportType(e.target.value)} className="p-2.5 rounded-lg border border-slate-200 shadow-sm bg-white focus:ring-blue-500 font-semibold text-sm">
               <option value="technicians">นำเข้า 'ทีมช่าง'</option>
@@ -1490,20 +1514,31 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
             <h3 className="font-bold text-slate-800">ค่าเดินทางแต่ละจังหวัด</h3>
           </div>
           <div className="p-4 flex-1 flex flex-col">
-            <div className="flex gap-2 mb-4">
-              <input type="text" placeholder="ชื่อจังหวัด" value={newProv.name} onChange={e=>setNewProv({...newProv, name:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500" />
-              <input type="number" placeholder="ค่าเดินทาง" value={newProv.travelCost} onChange={e=>setNewProv({...newProv, travelCost:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm w-28 shadow-sm focus:ring-blue-500" />
+            <div className="flex gap-2 mb-4 flex-wrap">
+              <input type="text" placeholder="ชื่อจังหวัด" value={newProv.name} onChange={e=>setNewProv({...newProv, name:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500 min-w-[120px]" />
+              <input type="date" title="มีผลตั้งแต่วันที่ (ไม่ระบุก็ได้)" value={newProv.startDate} onChange={e=>setNewProv({...newProv, startDate:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm shadow-sm focus:ring-blue-500" />
+              <span className="self-center text-slate-500">-</span>
+              <input type="date" title="ถึงวันที่ (ไม่ระบุก็ได้)" value={newProv.endDate} onChange={e=>setNewProv({...newProv, endDate:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm shadow-sm focus:ring-blue-500" />
+              <input type="number" placeholder="ค่าเดินทาง" value={newProv.travelCost} onChange={e=>setNewProv({...newProv, travelCost:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm w-24 shadow-sm focus:ring-blue-500" />
               <button onClick={handleAddProv} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 shadow-sm flex items-center"><PlusCircle size={18} className="mr-1"/>เพิ่ม</button>
             </div>
             <div className="overflow-y-auto border border-slate-100 rounded-lg flex-1 max-h-[300px]">
               <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600 sticky top-0"><tr><th className="p-3 text-left font-semibold">จังหวัด</th><th className="p-3 text-right font-semibold">ค่าเดินทาง</th><th className="p-3 text-center w-24 font-semibold">จัดการ</th></tr></thead>
+                <thead className="bg-slate-50 text-slate-600 sticky top-0"><tr><th className="p-3 text-left font-semibold">จังหวัด</th><th className="p-3 text-left font-semibold">ช่วงเวลาที่มีผล</th><th className="p-3 text-right font-semibold">ค่าเดินทาง</th><th className="p-3 text-center w-24 font-semibold">จัดการ</th></tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {db.provinces.map(p => (
-                    <tr key={p.name} className="hover:bg-slate-50 transition-colors">
-                      {editingProv?.oldName === p.name ? (
+                  {db.provinces.map((p, idx) => {
+                    const uniqueId = p.id || p.name;
+                    const isEditing = editingProv && (editingProv.id || editingProv.oldName) === uniqueId;
+                    return (
+                    <tr key={uniqueId + idx} className="hover:bg-slate-50 transition-colors">
+                      {isEditing ? (
                         <>
                           <td className="p-2"><input className="border border-slate-300 w-full p-1.5 rounded focus:ring-blue-500 text-sm" value={editingProv.name} onChange={e=>setEditingProv({...editingProv, name:e.target.value})} /></td>
+                          <td className="p-2 flex gap-1 items-center">
+                            <input type="date" className="border border-slate-300 p-1.5 rounded text-xs focus:ring-blue-500" value={editingProv.startDate || ''} onChange={e=>setEditingProv({...editingProv, startDate:e.target.value})} />
+                            <span>-</span>
+                            <input type="date" className="border border-slate-300 p-1.5 rounded text-xs focus:ring-blue-500" value={editingProv.endDate || ''} onChange={e=>setEditingProv({...editingProv, endDate:e.target.value})} />
+                          </td>
                           <td className="p-2"><input type="number" className="border border-slate-300 w-full p-1.5 rounded focus:ring-blue-500 text-sm text-right" value={editingProv.travelCost} onChange={e=>setEditingProv({...editingProv, travelCost:e.target.value})} /></td>
                           <td className="p-2 text-center space-x-1">
                             <button onClick={handleSaveProv} className="text-emerald-600 hover:text-emerald-800 bg-emerald-50 p-1.5 rounded"><Save size={16}/></button>
@@ -1513,15 +1548,19 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
                       ) : (
                         <>
                           <td className="p-3 font-medium text-slate-800">{p.name}</td>
+                          <td className="p-3 text-slate-600 text-xs">
+                            {p.startDate || p.endDate ? `${p.startDate ? formatDateThai(p.startDate) : 'เริ่มต้น'} - ${p.endDate ? formatDateThai(p.endDate) : 'ไม่มีกำหนด'}` : 'ค่าเริ่มต้น (ตลอดไป)'}
+                          </td>
                           <td className="p-3 text-right text-slate-600 font-semibold">{p.travelCost}</td>
                           <td className="p-3 text-center space-x-2">
-                            <button onClick={()=>setEditingProv({...p, oldName: p.name})} className="text-blue-600 hover:text-blue-800 bg-blue-50 p-1.5 rounded transition-colors"><Edit2 size={16}/></button>
-                            <button onClick={()=>handleDeleteProv(p.name)} className="text-red-500 hover:text-red-700 bg-red-50 p-1.5 rounded transition-colors"><Trash2 size={16}/></button>
+                            <button onClick={()=>setEditingProv({...p, oldName: p.name, id: p.id})} className="text-blue-600 hover:text-blue-800 bg-blue-50 p-1.5 rounded transition-colors"><Edit2 size={16}/></button>
+                            <button onClick={()=>handleDeleteProv(uniqueId)} className="text-red-500 hover:text-red-700 bg-red-50 p-1.5 rounded transition-colors"><Trash2 size={16}/></button>
                           </td>
                         </>
                       )}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1702,14 +1741,16 @@ export default function App() {
   const handleSaveRecord = async (newRecord) => {
     if (!firebaseUser) return;
     try {
-      await setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', newRecord.id), newRecord);
+      const cleanRecord = JSON.parse(JSON.stringify(newRecord));
+      await setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', newRecord.id), cleanRecord);
     } catch(e) { console.error(e); }
   };
 
   const handleUpdateRecord = async (updatedRecord) => {
     if (!firebaseUser) return;
     try {
-      await setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', updatedRecord.id), updatedRecord);
+      const cleanRecord = JSON.parse(JSON.stringify(updatedRecord));
+      await setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', updatedRecord.id), cleanRecord);
       setEditingRecord(null); // เคลียร์โหมดแก้ไข
     } catch(e) { console.error(e); }
   };
@@ -1759,7 +1800,8 @@ export default function App() {
       const batch = writeBatch(firestoreDb);
 
       const historyRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'claimHistory', claimInfo.id);
-      batch.set(historyRef, claimInfo);
+      const cleanClaimInfo = JSON.parse(JSON.stringify(claimInfo));
+      batch.set(historyRef, cleanClaimInfo);
 
       recordIds.forEach(id => {
         const recordRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'records', id);
@@ -1777,7 +1819,8 @@ export default function App() {
   const updateDb = async (newDb) => {
     if (!firebaseUser) return;
     try {
-      await setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'appState', 'main'), newDb);
+      const cleanDb = JSON.parse(JSON.stringify(newDb));
+      await setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'appState', 'main'), cleanDb);
     } catch(e) { console.error(e); }
   };
 
