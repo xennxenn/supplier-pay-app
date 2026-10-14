@@ -883,7 +883,7 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
                         <tr>
                           <td className="border-l border-r border-black p-1"></td>
                           <td className="border-l border-r border-black p-1 px-4">
-                            งานติดตั้ง{job.customerName} {job.orderNo} เซลล์ {job.salesperson} - {(job.calculated.installCost + (job.calculated.otherCost || 0)).toLocaleString('en-US', { minimumFractionDigits: 0 })} บาท
+                            {job.jobTypeName} {job.customerName} {job.orderNo} เซลล์ {job.salesperson} - {(job.calculated.installCost + (job.calculated.otherCost || 0)).toLocaleString('en-US', { minimumFractionDigits: 0 })} บาท
                           </td>
                           <td className="border-l border-r border-black p-1"></td>
                           <td className="border-l border-r border-black p-1"></td>
