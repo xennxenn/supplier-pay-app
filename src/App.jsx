@@ -243,33 +243,13 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
         otherExpense: editingRecord.otherExpense || (editingRecord.calculated?.otherCost || 0)
       });
 
-      // Migrate old fields to dynamic quantities automatically for UI display
-      if (editingRecord.calculated && !editingRecord.calculated.dynamicCosts) {
-         const mappedQtys = {};
-         const isCurt = db.jobTypes.find(j => j.id === editingRecord.jobTypeId)?.category === 'curtain';
-         const exps = db.expenseItems || [];
-         
-         if (editingRecord.ladderQty) {
-             const it = exps.find(e => e.name.includes('บันไดสูง'));
-             if(it) mappedQtys[it.id] = editingRecord.ladderQty;
-         }
-         if (editingRecord.motorQty) {
-             const it = exps.find(e => e.name.includes('มอเตอร์'));
-             if(it) mappedQtys[it.id] = editingRecord.motorQty;
-         }
-         if (editingRecord.scaffoldQty) {
-             const it = exps.find(e => e.name.includes('นั่งร้านทั่วไป') && (e.appliesTo === 'all' || e.appliesTo === (isCurt ? 'curtain' : 'wallpaper')));
-             if(it) mappedQtys[it.id] = editingRecord.scaffoldQty;
-         }
-         if (editingRecord.scaffoldTigerQty) {
-             const it = exps.find(e => e.name.includes('หัวเสือ'));
-             if(it) mappedQtys[it.id] = editingRecord.scaffoldTigerQty;
-         }
-         setDynamicQtys(mappedQtys);
-      } else if (editingRecord.calculated?.dynamicCosts) {
+      // ดึงข้อมูลไดนามิกเฉพาะถ้ามีในระบบใหม่ (ไม่เข้าไปดัดแปลง/แปลงโครงสร้างข้อมูลเก่า)
+      if (editingRecord.calculated?.dynamicCosts) {
          const qtys = {};
          editingRecord.calculated.dynamicCosts.forEach(dc => qtys[dc.id] = dc.qty);
          setDynamicQtys(qtys);
+      } else {
+         setDynamicQtys({});
       }
     } else {
       setFormData(defaultEmptyForm);
@@ -334,8 +314,14 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
   const grandTotal = travelCost + installCost + totalDynamicCost + otherCost;
 
   const executeSave = () => {
-    // กำจัด old values ทิ้งไปเพื่อใช้โครงสร้างแบบ dynamic ล้วนๆ
+    // กำจัด old values ที่เป็นซากจากฟอร์มทิ้งไป (เฉพาะรายการใหม่)
     const { ladderQty, scaffoldQty, motorQty, scaffoldTigerQty, ...cleanFormData } = formData;
+
+    // รักษายอดเงินของรายการเก่าไว้ไม่ให้คลาดเคลื่อนหากมีการกดแก้ไข
+    const legacyLadderCost = editingRecord?.calculated?.ladderCost || 0;
+    const legacyScaffoldCost = editingRecord?.calculated?.scaffoldCost || 0;
+    const legacyMotorCost = editingRecord?.calculated?.motorCost || 0;
+    const totalLegacyCost = legacyLadderCost + legacyScaffoldCost + legacyMotorCost;
 
     const recordToSave = {
       ...cleanFormData,
@@ -344,7 +330,16 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
       operationName: db.operations.find(o => o.id === formData.operationId)?.name || '',
       technicianName: db.technicians.find(t => t.id === formData.technicianId)?.name || '',
       isCurtain,
-      calculated: { travelCost, installCost, dynamicCosts, otherCost, grandTotal },
+      calculated: { 
+        travelCost, 
+        installCost, 
+        dynamicCosts, 
+        otherCost, 
+        grandTotal: travelCost + installCost + totalDynamicCost + otherCost + totalLegacyCost,
+        ladderCost: legacyLadderCost,
+        scaffoldCost: legacyScaffoldCost,
+        motorCost: legacyMotorCost
+      },
       isClaimed: editingRecord ? editingRecord.isClaimed : false
     };
 
@@ -507,10 +502,15 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
                 <span>{formatCurrency(dc.total)}</span>
               </div>
             ))}
+
+            {/* แสดงรายการเก่า (ถ้ามี) เพื่อให้ทราบว่ายอดรวมมาจากไหน */}
+            {editingRecord?.calculated?.ladderCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าบันไดสูง (ข้อมูลเดิม):</span> <span>{formatCurrency(editingRecord.calculated.ladderCost)}</span></div>}
+            {editingRecord?.calculated?.scaffoldCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่านั่งร้าน (ข้อมูลเดิม):</span> <span>{formatCurrency(editingRecord.calculated.scaffoldCost)}</span></div>}
+            {editingRecord?.calculated?.motorCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าติดตั้งมอเตอร์ (ข้อมูลเดิม):</span> <span>{formatCurrency(editingRecord.calculated.motorCost)}</span></div>}
             
             {otherCost !== 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าใช้จ่ายอื่นๆ:</span> <span>{formatCurrency(otherCost)}</span></div>}
             <div className="flex justify-between font-bold text-xl pt-3 border-t border-slate-100 mt-2 text-blue-700">
-              <span>ยอดรวมสุทธิ:</span> <span>฿{formatCurrency(grandTotal)}</span>
+              <span>ยอดรวมสุทธิ:</span> <span>฿{formatCurrency(travelCost + installCost + totalDynamicCost + otherCost + (editingRecord?.calculated?.ladderCost || 0) + (editingRecord?.calculated?.scaffoldCost || 0) + (editingRecord?.calculated?.motorCost || 0))}</span>
             </div>
           </div>
         </div>
