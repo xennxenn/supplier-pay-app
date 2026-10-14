@@ -230,7 +230,8 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
     salesperson: db.operations[0]?.sales[0] || '',
     quantity: 0,
     manualPricePerSqM: 0,
-    otherExpense: 0 
+    otherExpense: 0,
+    manualTotalAmount: 0 // เพิ่มสำหรับงานประเภทระบุยอดเอง
   };
 
   const [formData, setFormData] = useState(defaultEmptyForm);
@@ -240,7 +241,8 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
     if (editingRecord) {
       setFormData({
         ...editingRecord,
-        otherExpense: editingRecord.otherExpense || (editingRecord.calculated?.otherCost || 0)
+        otherExpense: editingRecord.otherExpense || (editingRecord.calculated?.otherCost || 0),
+        manualTotalAmount: editingRecord.calculated?.installCost || 0
       });
 
       // ดึงข้อมูลไดนามิกเฉพาะถ้ามีในระบบใหม่ (ไม่เข้าไปดัดแปลง/แปลงโครงสร้างข้อมูลเก่า)
@@ -264,12 +266,13 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
   };
 
   const handleJobChange = (e) => {
-    setFormData({ ...formData, jobTypeId: e.target.value, quantity: 0, manualPricePerSqM: 0 });
+    setFormData({ ...formData, jobTypeId: e.target.value, quantity: 0, manualPricePerSqM: 0, manualTotalAmount: 0 });
     setDynamicQtys({});
   };
 
   const currentJobType = db.jobTypes.find(j => j.id === formData.jobTypeId);
   const isCurtain = currentJobType?.category === 'curtain';
+  const isManual = currentJobType?.category === 'manual'; // เพิ่มเช็คงานระบุยอดเอง
 
   // --- Travel Cost Logic ---
   const jobDateStr = formData.date;
@@ -278,29 +281,33 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
                     || provs.find(p => p.startDate && !p.endDate && jobDateStr >= p.startDate)
                     || provs.find(p => !p.startDate && p.endDate && jobDateStr <= p.endDate)
                     || provs.find(p => !p.startDate && !p.endDate);
-  const travelCost = applicableProv ? applicableProv.travelCost : 0;
+  const travelCost = isManual ? 0 : (applicableProv ? applicableProv.travelCost : 0); // ไม่คิดค่าเดินทางถ้าระบุยอดเอง
   
   // --- Dynamic Costs Logic ---
   const dynamicCosts = [];
   let totalDynamicCost = 0;
 
-  (db.expenseItems || []).forEach(item => {
-    const isVisible = item.appliesTo === 'all' || item.appliesTo === currentJobType?.category;
-    if (isVisible) {
-       const qty = Number(dynamicQtys[item.id]) || 0;
-       if (qty > 0) {
-          const cost = qty * item.rate;
-          dynamicCosts.push({ id: item.id, name: item.name, qty, rate: item.rate, total: cost });
-          totalDynamicCost += cost;
-       }
-    }
-  });
+  if (!isManual) {
+    (db.expenseItems || []).forEach(item => {
+      const isVisible = item.appliesTo === 'all' || item.appliesTo === currentJobType?.category;
+      if (isVisible) {
+         const qty = Number(dynamicQtys[item.id]) || 0;
+         if (qty > 0) {
+            const cost = qty * item.rate;
+            dynamicCosts.push({ id: item.id, name: item.name, qty, rate: item.rate, total: cost });
+            totalDynamicCost += cost;
+         }
+      }
+    });
+  }
 
-  const otherCost = Number(formData.otherExpense) || 0;
+  const otherCost = isManual ? 0 : (Number(formData.otherExpense) || 0);
   const rates = db.rates || { curtainBase: 1500, curtainPerRailExceed: 120 };
   
   let installCost = 0;
-  if (isCurtain) {
+  if (isManual) {
+    installCost = Number(formData.manualTotalAmount) || 0;
+  } else if (isCurtain) {
     const activeRails = formData.quantity;
     if (activeRails <= 10 && activeRails > 0) {
       installCost = rates.curtainBase;
@@ -315,13 +322,13 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
 
   const executeSave = () => {
     // กำจัด old values ที่เป็นซากจากฟอร์มทิ้งไป (เฉพาะรายการใหม่)
-    const { ladderQty, scaffoldQty, motorQty, scaffoldTigerQty, ...cleanFormData } = formData;
+    const { ladderQty, scaffoldQty, motorQty, scaffoldTigerQty, manualTotalAmount, ...cleanFormData } = formData;
 
     // รักษายอดเงินของรายการเก่าไว้ไม่ให้คลาดเคลื่อนหากมีการกดแก้ไข
     const legacyLadderCost = editingRecord?.calculated?.ladderCost || 0;
     const legacyScaffoldCost = editingRecord?.calculated?.scaffoldCost || 0;
     const legacyMotorCost = editingRecord?.calculated?.motorCost || 0;
-    const totalLegacyCost = legacyLadderCost + legacyScaffoldCost + legacyMotorCost;
+    const totalLegacyCost = isManual ? 0 : (legacyLadderCost + legacyScaffoldCost + legacyMotorCost);
 
     const recordToSave = {
       ...cleanFormData,
@@ -427,22 +434,24 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">จังหวัดที่ติดตั้ง (ค่าเดินทาง)</label>
-              <select value={formData.province} onChange={e => setFormData({...formData, province: e.target.value})} className="w-full rounded-lg border-slate-200 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border transition-all bg-white">
-                <option value="">-- ไม่คิดค่าเดินทาง --</option>
-                {uniqueProvinces.map(pName => {
-                  const pProvs = db.provinces.filter(p => p.name === pName);
-                  let pApp = pProvs.find(p => p.startDate && p.endDate && formData.date >= p.startDate && formData.date <= p.endDate)
-                                  || pProvs.find(p => p.startDate && !p.endDate && formData.date >= p.startDate)
-                                  || pProvs.find(p => !p.startDate && p.endDate && formData.date <= p.endDate)
-                                  || pProvs.find(p => !p.startDate && !p.endDate);
-                  const pCost = pApp ? pApp.travelCost : 0;
-                  return <option key={pName} value={pName}>{pName} (฿{pCost})</option>
-                })}
-              </select>
-            </div>
-            <div>
+            {!isManual && (
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">จังหวัดที่ติดตั้ง (ค่าเดินทาง)</label>
+                <select value={formData.province} onChange={e => setFormData({...formData, province: e.target.value})} className="w-full rounded-lg border-slate-200 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border transition-all bg-white">
+                  <option value="">-- ไม่คิดค่าเดินทาง --</option>
+                  {uniqueProvinces.map(pName => {
+                    const pProvs = db.provinces.filter(p => p.name === pName);
+                    let pApp = pProvs.find(p => p.startDate && p.endDate && formData.date >= p.startDate && formData.date <= p.endDate)
+                                    || pProvs.find(p => p.startDate && !p.endDate && formData.date >= p.startDate)
+                                    || pProvs.find(p => !p.startDate && p.endDate && formData.date <= p.endDate)
+                                    || pProvs.find(p => !p.startDate && !p.endDate);
+                    const pCost = pApp ? pApp.travelCost : 0;
+                    return <option key={pName} value={pName}>{pName} (฿{pCost})</option>
+                  })}
+                </select>
+              </div>
+            )}
+            <div className={isManual ? "md:col-span-2" : ""}>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Operation</label>
               <select value={formData.operationId} onChange={handleOpChange} className="w-full rounded-lg border-slate-200 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border transition-all bg-white">
                 {db.operations.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
@@ -461,56 +470,67 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
           <h3 className="text-lg font-bold text-blue-900 mb-5 flex items-center">
             <Calculator className="mr-2 w-5 h-5"/> ข้อมูลการคำนวณค่าใช้จ่าย
           </h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">จำนวน ({isCurtain ? 'ราง' : 'ตร.ม'})</label>
-              <input type="number" min="0" value={formData.quantity} onChange={e => setFormData({...formData, quantity: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" />
-            </div>
-            {!isCurtain && (
+          
+          {isManual ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">ราคาต่อ ตร.ม (บาท)</label>
-                <input type="number" min="0" value={formData.manualPricePerSqM} onChange={e => setFormData({...formData, manualPricePerSqM: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" />
+                <label className="block text-sm font-bold text-blue-700 mb-1">ยอดเงินสุทธิที่ต้องการเบิก (บาท)</label>
+                <input type="number" min="0" value={formData.manualTotalAmount} onChange={e => setFormData({...formData, manualTotalAmount: Number(e.target.value)})} className="w-full rounded-lg border-blue-300 bg-white shadow-inner p-3 text-lg font-bold text-blue-900 border focus:ring-blue-500" placeholder="ระบุยอดเงินที่ตกลงไว้" />
+                <p className="text-xs text-blue-500 mt-2">* งานประเภทนี้ไม่ต้องหัก/บวกค่าใช้จ่ายจิปาถะอื่นๆ เพิ่มเติม</p>
               </div>
-            )}
-            
-            {/* Dynamic Rendering of Expenses */}
-            {(db.expenseItems || []).filter(item => item.appliesTo === 'all' || item.appliesTo === currentJobType?.category).map(item => (
-              <div key={item.id}>
-                <label className="block text-sm font-semibold text-slate-700 mb-1" title={item.name}>{item.name.length > 20 ? item.name.substring(0,20)+'...' : item.name} ({item.rate}/จุด)</label>
-                <input 
-                  type="number" min="0" 
-                  value={dynamicQtys[item.id] === undefined ? '' : dynamicQtys[item.id]} 
-                  onChange={e => setDynamicQtys({...dynamicQtys, [item.id]: Number(e.target.value)})} 
-                  className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" 
-                />
-              </div>
-            ))}
-
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">ค่าใช้จ่ายอื่นๆ (บวก/ลบ)</label>
-              <input type="number" value={formData.otherExpense} onChange={e => setFormData({...formData, otherExpense: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" placeholder="เช่น -500 หรือ 1000" />
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">จำนวน ({isCurtain ? 'ราง' : 'ตร.ม'})</label>
+                <input type="number" min="0" value={formData.quantity} onChange={e => setFormData({...formData, quantity: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" />
+              </div>
+              {!isCurtain && (
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">ราคาต่อ ตร.ม (บาท)</label>
+                  <input type="number" min="0" value={formData.manualPricePerSqM} onChange={e => setFormData({...formData, manualPricePerSqM: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" />
+                </div>
+              )}
+              
+              {/* Dynamic Rendering of Expenses */}
+              {(db.expenseItems || []).filter(item => item.appliesTo === 'all' || item.appliesTo === currentJobType?.category).map(item => (
+                <div key={item.id}>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1" title={item.name}>{item.name.length > 20 ? item.name.substring(0,20)+'...' : item.name} ({item.rate}/จุด)</label>
+                  <input 
+                    type="number" min="0" 
+                    value={dynamicQtys[item.id] === undefined ? '' : dynamicQtys[item.id]} 
+                    onChange={e => setDynamicQtys({...dynamicQtys, [item.id]: Number(e.target.value)})} 
+                    className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" 
+                  />
+                </div>
+              ))}
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">ค่าใช้จ่ายอื่นๆ (บวก/ลบ)</label>
+                <input type="number" value={formData.otherExpense} onChange={e => setFormData({...formData, otherExpense: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" placeholder="เช่น -500 หรือ 1000" />
+              </div>
+            </div>
+          )}
           
           <div className="bg-white p-5 rounded-xl border border-blue-100 shadow-sm space-y-2">
-            <div className="flex justify-between text-slate-600"><span>ค่าเดินทาง:</span> <span>{formatCurrency(travelCost)}</span></div>
-            <div className="flex justify-between text-slate-600"><span>ค่าแรงติดตั้ง:</span> <span>{formatCurrency(installCost)}</span></div>
+            {!isManual && <div className="flex justify-between text-slate-600"><span>ค่าเดินทาง:</span> <span>{formatCurrency(travelCost)}</span></div>}
+            <div className="flex justify-between text-slate-600"><span>ค่าแรงติดตั้ง/เหมา:</span> <span>{formatCurrency(installCost)}</span></div>
             
-            {dynamicCosts.map(dc => (
+            {!isManual && dynamicCosts.map(dc => (
               <div key={dc.id} className="flex justify-between text-slate-500 text-sm">
                 <span>{dc.name} ({dc.qty} จุด):</span>
                 <span>{formatCurrency(dc.total)}</span>
               </div>
             ))}
 
-            {/* แสดงรายการเก่า (ถ้ามี) เพื่อให้ทราบว่ายอดรวมมาจากไหน */}
-            {editingRecord?.calculated?.ladderCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าบันไดสูง (ข้อมูลเดิม):</span> <span>{formatCurrency(editingRecord.calculated.ladderCost)}</span></div>}
-            {editingRecord?.calculated?.scaffoldCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่านั่งร้าน (ข้อมูลเดิม):</span> <span>{formatCurrency(editingRecord.calculated.scaffoldCost)}</span></div>}
-            {editingRecord?.calculated?.motorCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าติดตั้งมอเตอร์ (ข้อมูลเดิม):</span> <span>{formatCurrency(editingRecord.calculated.motorCost)}</span></div>}
+            {/* แสดงรายการเก่า (ถ้ามี) */}
+            {!isManual && editingRecord?.calculated?.ladderCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าบันไดสูง (ข้อมูลเดิม):</span> <span>{formatCurrency(editingRecord.calculated.ladderCost)}</span></div>}
+            {!isManual && editingRecord?.calculated?.scaffoldCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่านั่งร้าน (ข้อมูลเดิม):</span> <span>{formatCurrency(editingRecord.calculated.scaffoldCost)}</span></div>}
+            {!isManual && editingRecord?.calculated?.motorCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าติดตั้งมอเตอร์ (ข้อมูลเดิม):</span> <span>{formatCurrency(editingRecord.calculated.motorCost)}</span></div>}
             
-            {otherCost !== 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าใช้จ่ายอื่นๆ:</span> <span>{formatCurrency(otherCost)}</span></div>}
+            {!isManual && otherCost !== 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าใช้จ่ายอื่นๆ:</span> <span>{formatCurrency(otherCost)}</span></div>}
             <div className="flex justify-between font-bold text-xl pt-3 border-t border-slate-100 mt-2 text-blue-700">
-              <span>ยอดรวมสุทธิ:</span> <span>฿{formatCurrency(travelCost + installCost + totalDynamicCost + otherCost + (editingRecord?.calculated?.ladderCost || 0) + (editingRecord?.calculated?.scaffoldCost || 0) + (editingRecord?.calculated?.motorCost || 0))}</span>
+              <span>ยอดรวมสุทธิ:</span> <span>฿{formatCurrency(travelCost + installCost + totalDynamicCost + otherCost + (isManual ? 0 : (editingRecord?.calculated?.ladderCost || 0) + (editingRecord?.calculated?.scaffoldCost || 0) + (editingRecord?.calculated?.motorCost || 0)))}</span>
             </div>
           </div>
         </div>
@@ -1285,6 +1305,7 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const [newOp, setNewOp] = useState({ name: '' });
   const [newSales, setNewSales] = useState({});
   const [newExp, setNewExp] = useState({ name: '', rate: '', appliesTo: 'all' });
+  const [newJob, setNewJob] = useState({ name: '', category: 'curtain' });
 
   const [editingTech, setEditingTech] = useState(null);
   const [editingProv, setEditingProv] = useState(null);
@@ -1292,6 +1313,7 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const [editingAdmin, setEditingAdmin] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [editingExp, setEditingExp] = useState(null);
+  const [editingJob, setEditingJob] = useState(null);
 
   const [importType, setImportType] = useState('technicians');
   const [importHasHeader, setImportHasHeader] = useState(true);
@@ -1313,6 +1335,7 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const handleAddUser = () => { if (newUser.username && newUser.password) { setDb({ ...db, users: [...(db.users || []), { ...newUser, id: 'U' + Date.now() }] }); setNewUser({ username: '', name: '', password: '' }); } };
   const handleAddOp = () => { if (newOp.name) { setDb({ ...db, operations: [...(db.operations || []), { id: 'OP' + Date.now(), name: newOp.name, sales: [] }] }); setNewOp({ name: '' }); } };
   const handleAddExp = () => { if (newExp.name && newExp.rate !== '') { setDb({ ...db, expenseItems: [...(db.expenseItems || []), { ...newExp, rate: Number(newExp.rate), id: 'EX' + Date.now() }] }); setNewExp({ name: '', rate: '', appliesTo: 'all' }); } };
+  const handleAddJob = () => { if (newJob.name) { setDb({ ...db, jobTypes: [...(db.jobTypes || []), { ...newJob, id: 'J' + Date.now() }] }); setNewJob({ name: '', category: 'curtain' }); } };
 
   const handleDeleteTech = (id) => { showConfirm('ยืนยันการลบช่าง?', () => { setDb({ ...db, technicians: db.technicians.filter(t => t.id !== id) }); }); };
   const handleDeleteProv = (id) => { showConfirm('ยืนยันการลบอัตราค่าเดินทางนี้?', () => { setDb({ ...db, provinces: db.provinces.filter(p => (p.id || p.name) !== id) }); }); };
@@ -1321,6 +1344,7 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const handleDeleteUser = (id) => { showConfirm('ยืนยันการลบผู้ใช้งาน?', () => { setDb({ ...db, users: db.users.filter(u => u.id !== id) }); }); };
   const handleDeleteOp = (id) => { showConfirm('ยืนยันการลบ Operation?', () => { setDb({ ...db, operations: db.operations.filter(o => o.id !== id) }); }); };
   const handleDeleteExp = (id) => { showConfirm('ยืนยันการลบรายการค่าใช้จ่ายนี้?', () => { setDb({ ...db, expenseItems: (db.expenseItems||[]).filter(e => e.id !== id) }); }); };
+  const handleDeleteJob = (id) => { showConfirm('ยืนยันการลบประเภทงานนี้?', () => { setDb({ ...db, jobTypes: (db.jobTypes||[]).filter(j => j.id !== id) }); }); };
 
   const handleAddSales = (opId) => { 
     const sName = newSales[opId];
@@ -1337,6 +1361,7 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
   const handleSaveAdmin = () => { setDb({ ...db, admins: db.admins.map(a => a.id === editingAdmin.id ? editingAdmin : a) }); setEditingAdmin(null); };
   const handleSaveUser = () => { setDb({ ...db, users: db.users.map(u => u.id === editingUser.id ? editingUser : u) }); setEditingUser(null); };
   const handleSaveExp = () => { setDb({ ...db, expenseItems: db.expenseItems.map(e => e.id === editingExp.id ? editingExp : e) }); setEditingExp(null); };
+  const handleSaveJob = () => { setDb({ ...db, jobTypes: db.jobTypes.map(j => j.id === editingJob.id ? editingJob : j) }); setEditingJob(null); };
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
@@ -1461,6 +1486,59 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
                         <td className="p-3 text-center space-x-2">
                           <button onClick={()=>setEditingExp(exp)} className="text-blue-600 hover:text-blue-800 bg-blue-50 p-1.5 rounded transition-colors"><Edit2 size={16}/></button>
                           <button onClick={()=>handleDeleteExp(exp.id)} className="text-red-500 hover:text-red-700 bg-red-50 p-1.5 rounded transition-colors"><Trash2 size={16}/></button>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col bg-white mb-6">
+        <div className="bg-slate-50 p-4 border-b border-slate-200">
+          <h3 className="font-bold text-slate-800">จัดการประเภทงาน (Job Types)</h3>
+        </div>
+        <div className="p-4 flex flex-col gap-4">
+          <div className="flex gap-2 flex-wrap">
+            <input type="text" placeholder="ชื่อประเภทงาน (เช่น งานตัดเย็บม่านหลุยส์)" value={newJob.name} onChange={e=>setNewJob({...newJob, name:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm flex-1 shadow-sm focus:ring-blue-500 min-w-[200px]" />
+            <select value={newJob.category} onChange={e=>setNewJob({...newJob, category:e.target.value})} className="border border-slate-200 p-2 rounded-lg text-sm shadow-sm focus:ring-blue-500 bg-white">
+              <option value="curtain">งานผ้าม่าน (คิดตามจำนวนราง)</option>
+              <option value="wallpaper">งานวอลเปเปอร์ (คิดตาม ตร.ม.)</option>
+              <option value="manual">งานเหมา/ระบุยอดเอง (เช่น งานตัดเย็บ)</option>
+            </select>
+            <button onClick={handleAddJob} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 shadow-sm flex items-center"><PlusCircle size={18} className="mr-1"/>เพิ่ม</button>
+          </div>
+          <div className="border border-slate-100 rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600 sticky top-0"><tr><th className="p-3 text-left font-semibold">ชื่อประเภทงาน</th><th className="p-3 text-left font-semibold">รูปแบบการคำนวณ</th><th className="p-3 text-center font-semibold w-24">จัดการ</th></tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {(db.jobTypes || []).map(job => (
+                  <tr key={job.id} className="hover:bg-slate-50 transition-colors">
+                    {editingJob?.id === job.id ? (
+                      <>
+                        <td className="p-2"><input className="border border-slate-300 w-full p-1.5 rounded focus:ring-blue-500" value={editingJob.name} onChange={e=>setEditingJob({...editingJob, name:e.target.value})} /></td>
+                        <td className="p-2">
+                          <select value={editingJob.category} onChange={e=>setEditingJob({...editingJob, category:e.target.value})} className="border border-slate-300 w-full p-1.5 rounded focus:ring-blue-500 bg-white">
+                            <option value="curtain">งานผ้าม่าน</option>
+                            <option value="wallpaper">งานวอลเปเปอร์</option>
+                            <option value="manual">งานเหมา/ระบุยอดเอง</option>
+                          </select>
+                        </td>
+                        <td className="p-2 text-center space-x-2">
+                          <button onClick={handleSaveJob} className="text-emerald-600 hover:text-emerald-800 bg-emerald-50 p-1.5 rounded"><Save size={16}/></button>
+                          <button onClick={()=>setEditingJob(null)} className="text-slate-500 hover:text-slate-700 bg-slate-100 p-1.5 rounded"><X size={16}/></button>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="p-3 font-medium text-slate-800">{job.name}</td>
+                        <td className="p-3 text-slate-600">{job.category === 'manual' ? 'ระบุยอดเอง (ไม่ต้องอิงเรท)' : job.category === 'curtain' ? 'คิดตามจำนวนราง' : 'คิดตามตารางเมตร'}</td>
+                        <td className="p-3 text-center space-x-2">
+                          <button onClick={()=>setEditingJob(job)} className="text-blue-600 hover:text-blue-800 bg-blue-50 p-1.5 rounded transition-colors"><Edit2 size={16}/></button>
+                          <button onClick={()=>handleDeleteJob(job.id)} className="text-red-500 hover:text-red-700 bg-red-50 p-1.5 rounded transition-colors"><Trash2 size={16}/></button>
                         </td>
                       </>
                     )}
@@ -1825,7 +1903,26 @@ export default function App() {
   const [db, setDb] = useState(initialDB);
   const [records, setRecords] = useState([]); 
   const [claimHistory, setClaimHistory] = useState([]);
-  const [loggedInUser, setLoggedInUser] = useState(null);
+  
+  // ระบบจดจำการเข้าระบบด้วย LocalStorage
+  const [loggedInUser, setLoggedInUser] = useState(() => {
+    try {
+      const savedUser = localStorage.getItem('sp_app_user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const handleLoginSuccess = (user) => {
+    setLoggedInUser(user);
+    localStorage.setItem('sp_app_user', JSON.stringify(user));
+  };
+
+  const handleLogout = () => {
+    setLoggedInUser(null);
+    localStorage.removeItem('sp_app_user');
+  };
   
   const [viewingHistoryRecord, setViewingHistoryRecord] = useState(null);
   const [editingRecord, setEditingRecord] = useState(null);
@@ -2082,7 +2179,7 @@ export default function App() {
   if (!loggedInUser) {
     return (
       <>
-        <LoginScreen db={db} onLogin={setLoggedInUser} showAlert={showAlert} />
+        <LoginScreen db={db} onLogin={handleLoginSuccess} showAlert={showAlert} />
         <DialogModal dialog={dialog} onClose={() => setDialog(null)} />
       </>
     );
@@ -2105,7 +2202,7 @@ export default function App() {
                 <User size={16} className="mr-1.5" />
                 <span>{loggedInUser.name}</span>
               </div>
-              <button onClick={() => setLoggedInUser(null)} className="flex items-center text-slate-300 hover:text-white transition-colors bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-sm font-semibold">
+              <button onClick={handleLogout} className="flex items-center text-slate-300 hover:text-white transition-colors bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-sm font-semibold">
                 <LogOut size={16} className="mr-1.5" />
                 ออกจากระบบ
               </button>
