@@ -23,7 +23,8 @@ import {
   Loader2,
   AlertCircle,
   AlertTriangle,
-  Unlock
+  Unlock,
+  Settings
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -36,7 +37,8 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, updateDoc, writeBatch } from 'firebase/firestore';
 
 // --- FIREBASE INITIALIZATION ---
-const firebaseConfig = {
+const isCanvasEnv = typeof __firebase_config !== 'undefined';
+const firebaseConfig = isCanvasEnv ? JSON.parse(__firebase_config) : {
   apiKey: "AIzaSyC6brJhM9IQzt7ZmrfR7EfWypxulP_U088",
   authDomain: "supplier-pay-app.firebaseapp.com",
   projectId: "supplier-pay-app",
@@ -49,7 +51,7 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const firestoreDb = getFirestore(firebaseApp);
-const appId = 'supplier-pay-app-v1';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'supplier-pay-app-v1';
 
 // --- MOCK DATABASE (Initial State / Fallback) ---
 const initialDB = {
@@ -57,6 +59,7 @@ const initialDB = {
     highLadder: 750,
     scaffoldCurtain: 1500,
     scaffoldWall: 2500,
+    scaffoldTigerHead: 2000, // เพิ่มเรทนั่งร้านพร้อมหัวเสือ
     motorInstall: 1500,
     curtainBase: 1500, 
     curtainPerRailExceed: 120
@@ -221,6 +224,7 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
     manualPricePerSqM: 0,
     ladderQty: 0,
     scaffoldQty: 0,
+    scaffoldTigerQty: 0, // เพิ่ม Field สำหรับนั่งร้านพร้อมหัวเสือ
     motorQty: 0,
     otherExpense: 0 
   };
@@ -231,6 +235,7 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
     if (editingRecord) {
       setFormData({
         ...editingRecord,
+        scaffoldTigerQty: editingRecord.scaffoldTigerQty || 0,
         otherExpense: editingRecord.otherExpense || (editingRecord.calculated?.otherCost || 0)
       });
     } else {
@@ -245,13 +250,13 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
   };
 
   const handleJobChange = (e) => {
-    setFormData({ ...formData, jobTypeId: e.target.value, quantity: 0, manualPricePerSqM: 0, motorQty: 0, scaffoldQty: 0, ladderQty: 0 });
+    setFormData({ ...formData, jobTypeId: e.target.value, quantity: 0, manualPricePerSqM: 0, motorQty: 0, scaffoldQty: 0, scaffoldTigerQty: 0, ladderQty: 0 });
   };
 
   const currentJobType = db.jobTypes.find(j => j.id === formData.jobTypeId);
   const isCurtain = currentJobType?.category === 'curtain';
 
-  // --- Updated Travel Cost Logic ---
+  // --- Travel Cost Logic ---
   const jobDateStr = formData.date;
   const provs = db.provinces.filter(p => p.name === formData.province);
   let applicableProv = provs.find(p => p.startDate && p.endDate && jobDateStr >= p.startDate && jobDateStr <= p.endDate)
@@ -259,26 +264,36 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
                     || provs.find(p => !p.startDate && p.endDate && jobDateStr <= p.endDate)
                     || provs.find(p => !p.startDate && !p.endDate);
   const travelCost = applicableProv ? applicableProv.travelCost : 0;
-  // ---------------------------------
+  // -------------------------
   
-  const ladderCost = formData.ladderQty * db.rates.highLadder;
-  const scaffoldCost = formData.scaffoldQty * (isCurtain ? db.rates.scaffoldCurtain : db.rates.scaffoldWall);
-  const motorCost = formData.motorQty * db.rates.motorInstall;
+  // Safe Fallback for Rates
+  const rateHighLadder = db.rates?.highLadder || 750;
+  const rateScaffoldCurtain = db.rates?.scaffoldCurtain || 1500;
+  const rateScaffoldWall = db.rates?.scaffoldWall || 2500;
+  const rateScaffoldTiger = db.rates?.scaffoldTigerHead || 2000;
+  const rateMotor = db.rates?.motorInstall || 1500;
+  const rateCurtainBase = db.rates?.curtainBase || 1500;
+  const rateCurtainExceed = db.rates?.curtainPerRailExceed || 120;
+
+  const ladderCost = formData.ladderQty * rateHighLadder;
+  const scaffoldCost = formData.scaffoldQty * (isCurtain ? rateScaffoldCurtain : rateScaffoldWall);
+  const scaffoldTigerCost = (formData.scaffoldTigerQty || 0) * rateScaffoldTiger; // คำนวณค่านั่งร้านพร้อมหัวเสือ
+  const motorCost = formData.motorQty * rateMotor;
   const otherCost = Number(formData.otherExpense) || 0;
   
   let installCost = 0;
   if (isCurtain) {
-    const activeRails = formData.quantity; // คิดจากจำนวนรางเต็มๆ ไม่นำ motorQty มาหักลบแล้ว
+    const activeRails = formData.quantity;
     if (activeRails <= 10 && activeRails > 0) {
-      installCost = db.rates.curtainBase;
+      installCost = rateCurtainBase;
     } else if (activeRails > 10) {
-      installCost = db.rates.curtainBase + ((activeRails - 10) * db.rates.curtainPerRailExceed);
+      installCost = rateCurtainBase + ((activeRails - 10) * rateCurtainExceed);
     }
   } else {
     installCost = formData.quantity * formData.manualPricePerSqM;
   }
 
-  const grandTotal = travelCost + ladderCost + scaffoldCost + motorCost + installCost + otherCost;
+  const grandTotal = travelCost + ladderCost + scaffoldCost + scaffoldTigerCost + motorCost + installCost + otherCost;
 
   const executeSave = () => {
     const recordToSave = {
@@ -288,7 +303,7 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
       operationName: db.operations.find(o => o.id === formData.operationId)?.name || '',
       technicianName: db.technicians.find(t => t.id === formData.technicianId)?.name || '',
       isCurtain,
-      calculated: { travelCost, ladderCost, scaffoldCost, motorCost, installCost, otherCost, grandTotal },
+      calculated: { travelCost, ladderCost, scaffoldCost, scaffoldTigerCost, motorCost, installCost, otherCost, grandTotal },
       isClaimed: editingRecord ? editingRecord.isClaimed : false
     };
 
@@ -421,16 +436,20 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
               </div>
             )}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">บันไดสูง ({db.rates.highLadder}/จุด)</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">บันไดสูง ({rateHighLadder}/จุด)</label>
               <input type="number" min="0" value={formData.ladderQty} onChange={e => setFormData({...formData, ladderQty: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">นั่งร้าน ({isCurtain ? db.rates.scaffoldCurtain : db.rates.scaffoldWall}/จุด)</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">นั่งร้านทั่วไป ({isCurtain ? rateScaffoldCurtain : rateScaffoldWall}/จุด)</label>
               <input type="number" min="0" value={formData.scaffoldQty} onChange={e => setFormData({...formData, scaffoldQty: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">นั่งร้าน+หัวเสือ ({rateScaffoldTiger}/จุด)</label>
+              <input type="number" min="0" value={formData.scaffoldTigerQty} onChange={e => setFormData({...formData, scaffoldTigerQty: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" />
             </div>
             {isCurtain && (
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">มอเตอร์ ({db.rates.motorInstall}/จุด)</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">มอเตอร์ ({rateMotor}/จุด)</label>
                 <input type="number" min="0" value={formData.motorQty} onChange={e => setFormData({...formData, motorQty: Number(e.target.value)})} className="w-full rounded-lg border-slate-200 p-2.5 border focus:ring-blue-500" />
               </div>
             )}
@@ -445,6 +464,7 @@ const DataEntry = ({ db, records, onSave, onUpdate, editingRecord, onCancelEdit,
             <div className="flex justify-between text-slate-600"><span>ค่าแรงติดตั้ง:</span> <span>{formatCurrency(installCost)}</span></div>
             {ladderCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าบันไดสูง ({formData.ladderQty} จุด):</span> <span>{formatCurrency(ladderCost)}</span></div>}
             {scaffoldCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่านั่งร้าน ({formData.scaffoldQty} จุด):</span> <span>{formatCurrency(scaffoldCost)}</span></div>}
+            {scaffoldTigerCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่านั่งร้านพร้อมหัวเสือ ({formData.scaffoldTigerQty} จุด):</span> <span>{formatCurrency(scaffoldTigerCost)}</span></div>}
             {motorCost > 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าติดตั้งมอเตอร์ ({formData.motorQty} จุด):</span> <span>{formatCurrency(motorCost)}</span></div>}
             {otherCost !== 0 && <div className="flex justify-between text-slate-500 text-sm"><span>ค่าใช้จ่ายอื่นๆ:</span> <span>{formatCurrency(otherCost)}</span></div>}
             <div className="flex justify-between font-bold text-xl pt-3 border-t border-slate-100 mt-2 text-blue-700">
@@ -784,6 +804,7 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
                   {jobs.map((job, jIdx) => {
                     const extraItems = [];
                     if (job.calculated.scaffoldCost > 0) extraItems.push(`ค่าตั้งนั่งร้าน ${job.calculated.scaffoldCost.toLocaleString('en-US')}`);
+                    if (job.calculated?.scaffoldTigerCost > 0) extraItems.push(`ค่านั่งร้านพร้อมหัวเสือ ${job.calculated.scaffoldTigerCost.toLocaleString('en-US')}`);
                     if (job.calculated.ladderCost > 0) extraItems.push(`ค่าบันไดสูง ${job.calculated.ladderCost.toLocaleString('en-US')}`);
                     if (job.calculated.motorCost > 0) extraItems.push(`ค่าติดตั้งมอเตอร์ ${job.calculated.motorCost.toLocaleString('en-US')}`);
                     if (job.calculated.travelCost > 0) extraItems.push(`ค่าเดินทาง ${job.calculated.travelCost.toLocaleString('en-US')}`);
@@ -793,7 +814,7 @@ const ReportView = ({ db, records, onClaimRecords, historyData, onCloseHistory }
                         <tr>
                           <td className="border-l border-r border-black p-1"></td>
                           <td className="border-l border-r border-black p-1 px-4">
-                            งานติดตั้ง{job.customerName} {job.orderNo} เซลล์ {job.salesperson} - {(job.calculated.installCost + (job.calculated.otherCost || 0)).toLocaleString('en-US', { minimumFractionDigits: 0 })} บาท
+                            งานติดตั้ง{job.customerName} {job.orderNo} เซลล์ {job.salesperson} - {((job.calculated.installCost || 0) + (job.calculated.otherCost || 0)).toLocaleString('en-US', { minimumFractionDigits: 0 })} บาท
                           </td>
                           <td className="border-l border-r border-black p-1"></td>
                           <td className="border-l border-r border-black p-1"></td>
@@ -1223,6 +1244,26 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
 
   const [importType, setImportType] = useState('technicians');
   const [importHasHeader, setImportHasHeader] = useState(true);
+  
+  // Rate Settings State
+  const [ratesForm, setRatesForm] = useState({
+    curtainBase: db.rates?.curtainBase || 1500,
+    curtainPerRailExceed: db.rates?.curtainPerRailExceed || 120,
+    highLadder: db.rates?.highLadder || 750,
+    scaffoldCurtain: db.rates?.scaffoldCurtain || 1500,
+    scaffoldWall: db.rates?.scaffoldWall || 2500,
+    scaffoldTigerHead: db.rates?.scaffoldTigerHead || 2000,
+    motorInstall: db.rates?.motorInstall || 1500
+  });
+
+  useEffect(() => {
+    if (db.rates) setRatesForm(prev => ({...prev, ...db.rates}));
+  }, [db.rates]);
+
+  const handleSaveRates = () => {
+     setDb({...db, rates: ratesForm});
+     showAlert("อัปเดตอัตราค่าบริการมาตรฐานสำเร็จ");
+  };
 
   const handleAddTech = () => { if (newTech.name) { setDb({ ...db, technicians: [...db.technicians, { ...newTech, id: 'T' + Date.now() }] }); setNewTech({ name: '', bank: '', branch: '', accNo: '' }); } };
   const handleAddProv = () => { if (newProv.name) { setDb({ ...db, provinces: [...db.provinces, { ...newProv, id: 'PRV' + Date.now(), travelCost: Number(newProv.travelCost) }] }); setNewProv({ name: '', travelCost: '', startDate: '', endDate: '' }); } };
@@ -1311,6 +1352,45 @@ const DatabaseView = ({ db, setDb, showAlert, showConfirm }) => {
           </div>
           จัดการฐานข้อมูลอ้างอิง
         </h2>
+      </div>
+
+      <div className="bg-gradient-to-r from-indigo-50 to-purple-50 p-6 rounded-xl border border-indigo-100 shadow-sm">
+        <div className="flex justify-between items-center mb-5">
+          <h3 className="font-bold text-lg text-indigo-900 flex items-center"><Settings className="mr-2" size={20}/> จัดการอัตราค่าบริการมาตรฐาน</h3>
+          <button onClick={handleSaveRates} className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg shadow-sm font-semibold flex items-center transition-colors">
+            <Save className="mr-2" size={16}/> บันทึกการเปลี่ยนแปลง
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="bg-white p-3 rounded-lg border border-indigo-100">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">ค่าติดตั้งม่านขั้นต่ำ (1-10 ราง)</label>
+            <div className="flex items-center"><input type="number" value={ratesForm.curtainBase} onChange={e=>setRatesForm({...ratesForm, curtainBase: Number(e.target.value)})} className="w-full font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded px-2 py-1"/><span className="text-slate-400 text-sm ml-2">บาท</span></div>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-indigo-100">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">ค่าม่าน รางส่วนเกิน (ต่อราง)</label>
+            <div className="flex items-center"><input type="number" value={ratesForm.curtainPerRailExceed} onChange={e=>setRatesForm({...ratesForm, curtainPerRailExceed: Number(e.target.value)})} className="w-full font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded px-2 py-1"/><span className="text-slate-400 text-sm ml-2">บาท</span></div>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-indigo-100">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">ค่าติดตั้งมอเตอร์ (ต่อจุด)</label>
+            <div className="flex items-center"><input type="number" value={ratesForm.motorInstall} onChange={e=>setRatesForm({...ratesForm, motorInstall: Number(e.target.value)})} className="w-full font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded px-2 py-1"/><span className="text-slate-400 text-sm ml-2">บาท</span></div>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-indigo-100">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">ค่าบันไดสูง (ต่อจุด)</label>
+            <div className="flex items-center"><input type="number" value={ratesForm.highLadder} onChange={e=>setRatesForm({...ratesForm, highLadder: Number(e.target.value)})} className="w-full font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded px-2 py-1"/><span className="text-slate-400 text-sm ml-2">บาท</span></div>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-indigo-100">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">ค่านั่งร้าน งานม่าน (ต่อจุด)</label>
+            <div className="flex items-center"><input type="number" value={ratesForm.scaffoldCurtain} onChange={e=>setRatesForm({...ratesForm, scaffoldCurtain: Number(e.target.value)})} className="w-full font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded px-2 py-1"/><span className="text-slate-400 text-sm ml-2">บาท</span></div>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-indigo-100">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">ค่านั่งร้าน งานวอลเปเปอร์ (ต่อจุด)</label>
+            <div className="flex items-center"><input type="number" value={ratesForm.scaffoldWall} onChange={e=>setRatesForm({...ratesForm, scaffoldWall: Number(e.target.value)})} className="w-full font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded px-2 py-1"/><span className="text-slate-400 text-sm ml-2">บาท</span></div>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-indigo-100">
+            <label className="block text-xs font-semibold text-amber-600 mb-1">ค่านั่งร้านพร้อมหัวเสือ (ต่อจุด)</label>
+            <div className="flex items-center"><input type="number" value={ratesForm.scaffoldTigerHead} onChange={e=>setRatesForm({...ratesForm, scaffoldTigerHead: Number(e.target.value)})} className="w-full font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded px-2 py-1"/><span className="text-slate-400 text-sm ml-2">บาท</span></div>
+          </div>
+        </div>
       </div>
 
       <div className="bg-gradient-to-r from-slate-50 to-blue-50 p-6 rounded-xl border border-blue-100 shadow-sm flex flex-col md:flex-row items-center gap-6 justify-between">
@@ -1677,6 +1757,13 @@ export default function App() {
   const showConfirm = (message, onConfirm) => setDialog({ message, type: 'confirm', onConfirm });
   const showPrompt = (message, expectedInput, onConfirm) => setDialog({ message, type: 'prompt', expectedInput, onConfirm });
 
+  // ฟังก์ชันกำจัด undefined ออกจาก Object ก่อนส่งขึ้น Firebase
+  const cleanUndefined = (obj) => {
+    return JSON.parse(JSON.stringify(obj, (key, value) => {
+      return value === undefined ? null : value;
+    }));
+  };
+
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -1712,7 +1799,7 @@ export default function App() {
         if (!cloudDb.users) cloudDb.users = initialDB.users;
         setDb(cloudDb);
       } else {
-        setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'appState', 'main'), initialDB).catch(console.error);
+        setDoc(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'appState', 'main'), cleanUndefined(initialDB)).catch(console.error);
         setDb(initialDB);
       }
       setIsFirebaseLoading(false);
